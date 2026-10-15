@@ -4,8 +4,10 @@
 |---|---|
 | 0 — Fondations | ✅ validée (commit `15e2a5b`) |
 | 1 — Simulateur | ✅ validée (commit `6064638`) ; ajustement : minerai réduit (étape 2) |
-| 2 — Env Gymnasium | ✅ tests passés, en attente de feu vert |
-| 3 à 9 | — |
+| 2 — Env Gymnasium | ✅ validée (commit `b967d93`) |
+| 3 — Agents de référence et banc d'évaluation | ✅ validée avec la récompense v2 (commit `b8541d6`) |
+| 4 — Baseline PPO | ✅ résultats obtenus, en attente de feu vert |
+| 5 à 9 | — |
 
 ## Étape 0 — résultats de la porte
 
@@ -97,3 +99,44 @@ Aucune stratégie absurde ne dépasse la référence (en moyenne ni au maximum p
 
 ### Historique : la récompense v1 était exploitable
 Avec l'ancienne récompense (potentiel de l'état final), l'oracle « hibernait puis explosait » (population moyenne 30,9, creux à 2 fourmis, 36 % du retour dans les 50 derniers pas) pour un retour de 152,1. Résultats v1 conservés dans `runs/step3_v1/` (non versionné). Détail et correction : `docs/DECISIONS.md`.
+
+## Étape 4 — résultats
+
+`pytest` : 152 tests rapides passés (+ 3 lents, dont `test_ppo_learns_on_the_simple_world`). Toutes les mesures : 5 seeds d'entraînement, mondes d'entraînement tirés dans les seeds [0, 1000), courbes sur 10 mondes de validation, résultats finaux sur les 20 mondes de test (mêmes que l'étape 3).
+
+### Monde simplifié (nourriture seule, sans brouillard) — 100 k pas, 5 seeds
+| Agent | Retour (test) |
+|---|---|
+| aléatoire | 63,9 [60,8 ; 67,3] |
+| heuristique | 80,0 [79,3 ; 80,4] |
+| oracle (CEM 32×2, H60) | 80,6 [80,5 ; 80,6] |
+| **PPO (5 seeds)** | **80,0** sur chacune des 5 seeds (+16,1 contre l'aléatoire) |
+
+Critère « PPO bat nettement l'aléatoire » : **atteint**. Mais ce monde est **trop facile** (plafond 80,6 atteint par l'heuristique ; une politique non entraînée y obtient déjà 77 dans 3 cas sur 5) : il valide la plomberie, pas l'efficacité. Voir DECISIONS.md.
+
+### Monde complet — 2 M pas par seed, 5 seeds (`runs/step4/ppo_full_2M/`)
+| Agent | Retour (test, 20 mondes) | Écart apparié |
+|---|---|---|
+| aléatoire | 80,7 [76,8 ; 84,7] | |
+| heuristique | 110,4 [106,4 ; 114,4] | |
+| **PPO, politique stochastique (référence)** | **110,9 [109,5 ; 112,2]** (par seed : 108,4 ; 112,8 ; 112,5 ; 110,6 ; 110,1) | − heuristique **+0,5 [−2,0 ; +3,0]** ; − aléatoire **+30,2 [+26,3 ; +33,7]** ; oracle − PPO **+23,0 [+20,3 ; +25,9]** |
+| PPO, politique déterministe (argmax) | 110,0 [108,6 ; 111,4] | − heuristique −0,4 [−4,1 ; +2,9] |
+| oracle | 133,9 [131,8 ; 135,9] | |
+
+PPO **égale l'heuristique, sans la dépasser**, et reste **23 points sous l'oracle** : c'est la marge qu'un modèle du monde pourrait chercher à combler. Pas d'exploitation de la récompense (population moyenne 62,7, creux 52,2, 11 % du retour dans les 50 derniers pas).
+
+**Référence d'efficacité en échantillons (politique stochastique, courbe de validation, médiane [min-max] sur 5 seeds)** :
+| Cible | Pas d'environnement | Temps d'entraînement (CPU) |
+|---|---|---|
+| 90 % de l'heuristique (98,5) | **78 k** [68-81 k] | 240 s |
+| 100 % de l'heuristique (109,5) | **282 k** [192-374 k] | 865 s |
+| plateau lent ensuite | ~115 (validation) à 2 M pas | 3 650 s pour 2 M pas |
+Politique déterministe (argmax) : 691 k et 1,18 M pas : l'évaluation par argmax **surestime fortement le coût en échantillons** (voir DECISIONS.md).
+
+Courbes : `runs/step4/ppo_full_2M/learning_curves_stochastic.png` (et `learning_curves.png` pour l'argmax).
+Premier run (1 M pas, déterministe seul) : 102,4 [100,0 ; 104,8] en test, conservé dans `runs/step4/ppo_full/`.
+
+### Limites
+- Hyperparamètres PPO non optimisés (baseline standard) ; 5 seeds ; débit ~600-800 pas/s par processus sur CPU (1 thread). Les 2 M de pas par seed ont pris ~1 h 02 (5 processus en parallèle sur 4 cœurs).
+- L'écart PPO − heuristique de la courbe de validation (+5) est plus grand qu'en test (+0,5) : 10 mondes de validation, bruit de ± 2,5 ; la mesure de référence est celle de test (20 mondes).
+- Un PPO plus long ou mieux réglé pourrait faire mieux : **commande pour la machine avec GPU** : `python scripts/train_ppo.py --world full --steps 5000000 --seeds 0 1 2 3 4 --workers 1 --refs-val runs/step4/full_baselines/val/summary.json --refs-test runs/step3/test/summary.json --out runs/step4/ppo_full_5M` ; à lancer aussi avec `device: cuda` dans `configs/ppo.yaml` pour comparer le temps réel (le petit réseau peut ne pas gagner à passer sur GPU).

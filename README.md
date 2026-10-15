@@ -24,6 +24,10 @@ pytest                       # lance tous les tests
 python scripts/check_determinism.py --seed 42
 python scripts/bench_sim.py                       # vitesse du simulateur sur cette machine
 python scripts/play_random.py --seed 3            # partie aléatoire -> runs/step1/*.gif et *.png
+python scripts/run_baselines.py --split test --n-worlds 20 --workers 4   # aléatoire, heuristique, oracle (étape 3)
+python scripts/train_ppo.py --world simple --steps 100000 --workers 4    # PPO, monde simplifié (étape 4)
+python scripts/train_ppo.py --world full --steps 2000000 --workers 5     # PPO, monde complet (~1 h sur 4 cœurs)
+pytest -m slow                                                           # tests longs
 ```
 
 ## Conventions
