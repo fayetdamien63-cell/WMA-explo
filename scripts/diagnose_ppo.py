@@ -26,6 +26,7 @@ WORLDS = {"simple": "antworld_simple.yaml", "full": "antworld.yaml"}
 
 
 def main() -> None:
+    torch.set_num_threads(1)            # ne pas monopoliser les cœurs d'un entraînement en cours
     ap = argparse.ArgumentParser()
     ap.add_argument("run_dir", type=Path)
     ap.add_argument("--world", choices=WORLDS, default="full")
