@@ -18,22 +18,23 @@ def steps_to_reach(steps, values, target: float) -> float | None:
     return None
 
 
-def per_seed_curves(records: list[dict], agent: str = "ppo") -> dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]]:
-    """{seed: (pas d'entraînement, retour moyen, temps d'entraînement)} triés par pas."""
+def per_seed_curves(records: list[dict], agent: str = "ppo", key: str = "mean_return") -> dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """{seed: (pas d'entraînement, retour moyen (champ `key`), temps d'entraînement)} triés par pas."""
     out = {}
     for seed in sorted({r["seed"] for r in records if r["agent"] == agent}):
         rows = sorted((r for r in records if r["agent"] == agent and r["seed"] == seed), key=lambda r: r["train_env_steps"])
-        out[seed] = (np.array([r["train_env_steps"] for r in rows]), np.array([r["mean_return"] for r in rows]),
+        out[seed] = (np.array([r["train_env_steps"] for r in rows]), np.array([r[key] for r in rows]),
                      np.array([r.get("wall_s", np.nan) for r in rows]))
     return out
 
 
-def sample_efficiency(records: list[dict], targets: dict[str, float], agent: str = "ppo") -> dict[str, dict]:
+def sample_efficiency(records: list[dict], targets: dict[str, float], agent: str = "ppo",
+                      key: str = "mean_return") -> dict[str, dict]:
     """Pour chaque cible (p. ex. « 90 % de l'heuristique »), pas et temps nécessaires, par seed.
 
     Renvoie {nom: {"steps": [par seed, None si jamais atteint], "wall_s": [...], "reached": k/n, "median_steps": ...}}.
     """
-    curves = per_seed_curves(records, agent)
+    curves = per_seed_curves(records, agent, key)
     out = {}
     for name, target in targets.items():
         steps, walls = [], []

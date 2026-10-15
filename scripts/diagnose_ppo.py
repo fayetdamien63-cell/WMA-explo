@@ -19,18 +19,10 @@ from antworld.env import AntWorldEnv
 from common.config import load_config
 from common.device import get_device
 from eval.harness import run_episode
-from eval.seeds import val_seeds
+from eval.seeds import test_seeds, val_seeds
 
 ROOT = Path(__file__).resolve().parent.parent
 WORLDS = {"simple": "antworld_simple.yaml", "full": "antworld.yaml"}
-
-
-class StochasticPPOAgent(PPOAgent):
-    name = "ppo_stochastic"
-
-    def act(self, obs, env=None):
-        action, _ = self.model.predict(obs, deterministic=False)
-        return np.asarray(action, dtype=np.int64)
 
 
 def main() -> None:
@@ -39,14 +31,15 @@ def main() -> None:
     ap.add_argument("--world", choices=WORLDS, default="full")
     ap.add_argument("--seeds", type=int, nargs="+", default=[0])
     ap.add_argument("--worlds", type=int, default=10)
+    ap.add_argument("--split", choices=("val", "test"), default="val")
     args = ap.parse_args()
     cfg = load_config(AntWorldConfig, ROOT / "configs" / WORLDS[args.world])
-    worlds = val_seeds(args.worlds)
+    worlds = (val_seeds if args.split == "val" else test_seeds)(args.worlds)
 
     for seed in args.seeds:
         model = PPO.load(str(args.run_dir / f"ppo_seed{seed}.zip"), device=get_device("cpu"))
         det = [run_episode(PPOAgent(model), cfg, w, seed) for w in worlds]
-        sto = [run_episode(StochasticPPOAgent(model), cfg, w, seed) for w in worlds]
+        sto = [run_episode(PPOAgent(model, deterministic=False), cfg, w, seed) for w in worlds]
         # Entropie moyenne de la politique et actions les plus fréquentes (politique déterministe) sur un épisode.
         env = AntWorldEnv(cfg)
         obs, _ = env.reset(seed=worlds[0])

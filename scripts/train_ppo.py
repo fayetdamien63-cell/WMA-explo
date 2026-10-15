@@ -44,10 +44,11 @@ def train_one(args):
     from stable_baselines3 import PPO
     from common.device import get_device
     model = PPO.load(str(Path(out_dir) / f"ppo_seed{seed}.zip"), device=get_device(cfg.device))
-    res = evaluate_on(model, world_cfg, test_seeds(n_test), seed, summary["train_env_steps"])
-    save_results(res, out_dir, f"ppo_seed{seed}")
-    summary["test_returns"] = [r.ret for r in res]
-    summary["test_mean"] = float(np.mean(summary["test_returns"]))
+    for mode, deterministic in (("deterministic", True), ("stochastic", False)):
+        res = evaluate_on(model, world_cfg, test_seeds(n_test), seed, summary["train_env_steps"], deterministic)
+        save_results(res, out_dir, f"ppo_seed{seed}" if deterministic else f"ppo_stochastic_seed{seed}")
+        summary[f"test_returns_{mode}"] = [r.ret for r in res]
+        summary[f"test_mean_{mode}"] = float(np.mean(summary[f"test_returns_{mode}"]))
     return summary
 
 
@@ -79,20 +80,23 @@ def main() -> None:
 
     records = [json.loads(l) for s in args.seeds for l in (out / f"ppo_seed{s}_curve.jsonl").read_text(encoding="utf-8").splitlines()]
     lines = [f"PPO, monde « {args.world} », seeds {args.seeds}, {summaries[0]['train_env_steps']} pas par seed, {total_wall:.0f} s au total", ""]
-    finals = np.array([s["test_mean"] for s in summaries])
-    lo, hi = bootstrap_ci(finals)
-    lines.append(f"Retour final sur {args.test_worlds} mondes de TEST (moyenne des seeds d'entraînement) : {finals.mean():.1f} "
-                 f"[IC 95 % entre seeds : {lo:.1f}, {hi:.1f}] ; par seed : " + ", ".join(f"{v:.1f}" for v in finals))
-    summary = {"world": args.world, "seeds": args.seeds, "steps": summaries[0]["train_env_steps"], "test_by_seed": finals.tolist(),
-               "test_mean": float(finals.mean()), "test_ci": [lo, hi], "train_wall_s": [s["train_wall_s"] for s in summaries]}
+    summary = {"world": args.world, "seeds": args.seeds, "steps": summaries[0]["train_env_steps"],
+               "train_wall_s": [s["train_wall_s"] for s in summaries]}
+    refs_test = json.loads(args.refs_test.read_text(encoding="utf-8"))["agents"] if args.refs_test else {}
+    for mode, label in (("stochastic", "stochastique (politique optimisée par PPO : RÉFÉRENCE)"), ("deterministic", "déterministe (argmax)")):
+        finals = np.array([s[f"test_mean_{mode}"] for s in summaries])
+        lo, hi = bootstrap_ci(finals)
+        lines.append(f"Retour final sur {args.test_worlds} mondes de TEST, politique {label} : {finals.mean():.1f} "
+                     f"[IC 95 % entre seeds : {lo:.1f}, {hi:.1f}] ; par seed : " + ", ".join(f"{v:.1f}" for v in finals))
+        summary[f"test_{mode}"] = {"by_seed": finals.tolist(), "mean": float(finals.mean()), "ci": [lo, hi]}
+        if "random" in refs_test:
+            lines.append(f"    − aléatoire : {finals.mean() - refs_test['random']['mean']:+.1f}")
+        if "heuristic" in refs_test:
+            lines.append(f"    − heuristique : {finals.mean() - refs_test['heuristic']['mean']:+.1f}")
+    for name, r in refs_test.items():
+        lines.append(f"  référence {name:10s} (test) : {r['mean']:.1f} [{r['ci_low']:.1f}, {r['ci_high']:.1f}]")
+    summary["refs_test"] = {n: r["mean"] for n, r in refs_test.items()}
 
-    if args.refs_test:
-        ref = json.loads(args.refs_test.read_text(encoding="utf-8"))["agents"]
-        for name, r in ref.items():
-            lines.append(f"  référence {name:10s} (test) : {r['mean']:.1f} [{r['ci_low']:.1f}, {r['ci_high']:.1f}]")
-        summary["refs_test"] = {n: r["mean"] for n, r in ref.items()}
-        if "random" in ref:
-            lines.append(f"  PPO − aléatoire : {finals.mean() - ref['random']['mean']:+.1f}")
     if args.refs_val:
         ref = json.loads(args.refs_val.read_text(encoding="utf-8"))["agents"]
         targets = {}
@@ -100,12 +104,13 @@ def main() -> None:
             targets = {"90 % de l'heuristique": 0.9 * ref["heuristic"]["mean"], "100 % de l'heuristique": ref["heuristic"]["mean"]}
         if "random" in ref:
             targets["aléatoire + 50 % (heur. − aléa.)"] = ref["random"]["mean"] + 0.5 * (ref["heuristic"]["mean"] - ref["random"]["mean"])
-        eff = sample_efficiency(records, targets)
-        summary["efficiency"] = eff
-        lines += ["", "Efficacité en échantillons (courbe de validation ; pas d'environnement pour atteindre la cible) :"]
-        for name, e in eff.items():
-            med = f"{e['median_steps']:,.0f}".replace(",", " ") if e["median_steps"] is not None else "jamais atteint"
-            lines.append(f"  - {name} (≥ {e['target']:.1f}) : atteint par {e['reached']} seeds, médiane {med} pas")
+        for key, label in (("mean_return_stochastic", "politique STOCHASTIQUE (référence)"), ("mean_return", "politique déterministe")):
+            eff = sample_efficiency(records, targets, key=key)
+            summary[f"efficiency_{key}"] = eff
+            lines += ["", f"Efficacité en échantillons, {label} (courbe de validation ; pas d'environnement pour atteindre la cible) :"]
+            for name, e in eff.items():
+                med = f"{e['median_steps']:,.0f}".replace(",", " ") if e["median_steps"] is not None else "jamais atteint"
+                lines.append(f"  - {name} (≥ {e['target']:.1f}) : atteint par {e['reached']} seeds, médiane {med} pas")
     (out / "summary.json").write_text(json.dumps(summary, indent=2, default=float), encoding="utf-8")
     (out / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))

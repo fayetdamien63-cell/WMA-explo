@@ -113,12 +113,24 @@ def test_ppo_training_writes_curve_model_and_a_loadable_agent(tmp_path):
     rows = [json.loads(l) for l in (tmp_path / "ppo_seed0_curve.jsonl").read_text().splitlines()]
     steps = [r["train_env_steps"] for r in rows]
     assert steps[0] == 0 and steps == sorted(steps) and steps[-1] == summary["train_env_steps"] >= 128
-    assert all(np.isfinite(r["mean_return"]) and r["wall_s"] >= 0 and r["agent"] == "ppo" and r["seed"] == 0 for r in rows)
+    assert all(np.isfinite(r["mean_return"]) and np.isfinite(r["mean_return_stochastic"]) and r["wall_s"] >= 0
+               and r["agent"] == "ppo" and r["seed"] == 0 for r in rows)
     agent = PPOAgent.from_file(tmp_path / "ppo_seed0.zip", train_env_steps=steps[-1])
     res = run_episode(agent, SIMPLE, 5, agent_seed=0)
     assert np.isfinite(res.ret) and res.train_env_steps == steps[-1] and res.sim_steps == 0
     again = run_episode(agent, SIMPLE, 5, agent_seed=0)
     assert again.ret == res.ret, "politique déterministe"
+
+
+def test_stochastic_agent_is_reproducible_given_its_seed_and_differs_from_argmax(tmp_path):
+    train_ppo(SIMPLE, tiny_cfg(), seed=0, out_dir=tmp_path, log=lambda *_: None)
+    det = PPOAgent.from_file(tmp_path / "ppo_seed0.zip")
+    sto = PPOAgent.from_file(tmp_path / "ppo_seed0.zip", deterministic=False)
+    assert det.name == "ppo" and sto.name == "ppo_stochastic"
+    a, b, c = (run_episode(sto, SIMPLE, 5, agent_seed=s) for s in (0, 0, 1))
+    assert a.ret == b.ret, "même seed d'agent => même partie stochastique"
+    d = run_episode(det, SIMPLE, 5, 0)
+    assert (a.ret, c.ret) != (d.ret, d.ret) and a.series["pop"].tolist() != d.series["pop"].tolist()
 
 
 def test_ppo_is_reproducible_given_the_seed_and_differs_across_seeds(tmp_path):
@@ -144,13 +156,17 @@ def test_sample_efficiency_per_seed_and_median():
         for step in (0, 1000, 2000, 3000):
             recs.append({"agent": "ppo", "seed": seed, "train_env_steps": step, "mean_return": 10 * speed * step / 1000,
                          "wall_s": step / 100})
-    recs.append({"agent": "autre", "seed": 0, "train_env_steps": 0, "mean_return": 1e9})
+    for r in recs:
+        r["mean_return_stochastic"] = 2 * r["mean_return"]            # courbe stochastique deux fois plus rapide
+    recs.append({"agent": "autre", "seed": 0, "train_env_steps": 0, "mean_return": 1e9, "mean_return_stochastic": 1e9})
     curves = per_seed_curves(recs)
     assert sorted(curves) == [0, 1, 2] and list(curves[0][0]) == [0, 1000, 2000, 3000]
     eff = sample_efficiency(recs, {"cible 10": 10.0})["cible 10"]
     assert eff["reached"] == "2/3"                          # la seed lente (×0,1) n'atteint jamais 10
     assert eff["steps"][0] == pytest.approx(1000) and eff["steps"][1] == pytest.approx(500) and eff["steps"][2] is None
     assert eff["median_steps"] == pytest.approx(750) and eff["wall_s"][0] == pytest.approx(10.0)
+    sto = sample_efficiency(recs, {"cible 10": 10.0}, key="mean_return_stochastic")["cible 10"]
+    assert sto["steps"][0] == pytest.approx(500) and sto["reached"] == "2/3"   # clé choisie : la courbe stochastique va 2x plus vite ; la seed lente n'atteint toujours pas
 
 
 # ------------------------------------------------------------------ test long : PPO apprend vraiment (monde simplifié)

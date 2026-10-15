@@ -180,3 +180,21 @@ de creux (population minimale 93 % de la moyenne), plus d'explosion finale (13-1
 - **Test lent d'un optimiseur** (`tests/test_baselines_gate.py`) : un oracle de budget moyen ne doit déclencher aucune alerte et garder une population moyenne ≥ 90 % de celle de l'heuristique.
   Leçon : un test anti-triche qui n'utilise que des stratégies codées à la main ne voit pas ce qu'un optimiseur trouve.
 - **Heuristique non modifiée** : réévaluée sous la v2 sur les seeds d'entraînement, toutes les variantes testées restent dans le bruit (±2) ; elle obtient 107,7 ± 1,5 sur les 40 mondes d'entraînement.
+
+## Étape 4
+
+- **Monde simplifié = test de plomberie, pas un banc de comparaison** (`configs/antworld_simple.yaml` : nourriture seule, sans brouillard, donc sans minerai ni bâtiments). Il est *trop facile* :
+  heuristique 80,0 ≈ oracle 80,6 (plafond : 40 fourmis + stock plein), aléatoire 63,9 ; même une politique NON entraînée y atteint 77 dans 3 cas sur 5 (l'argmax d'un réseau aléatoire
+  tombe sur l'action « tout le monde cueille »). L'indicateur « pas pour atteindre 90 % de l'heuristique » y vaut 0 : **sans information**. La référence d'efficacité vient du monde complet.
+  Le critère « écart heuristique/oracle » de l'étape 3 n'a aucun sens dans ce monde (il y est « non atteint » : normal, tout est résolu).
+- **PPO = stable-baselines3, `MultiInputPolicy` + extracteur maison** (`models/features.py` : 3 convolutions de pas 2 + MLP d'état, ~90 k paramètres) : le CNN par défaut de SB3 exige ≥ 36 pixels de côté.
+  Hyperparamètres dans `configs/ppo.yaml` (8 envs × 128 pas, lot 256, 4 époques, γ = 0,995, λ = 0,95, entropie 0,01, récompense normalisée par `VecNormalize` pour l'apprentissage seulement).
+  Ils n'ont pas été optimisés : c'est une baseline standard, pas une baseline réglée (limite à garder en tête pour les comparaisons de l'étape 8).
+- **Mondes d'entraînement tirés dans les seeds [0, 1000)** par un flux `rng_seed` dérivé de `SeedManager(seed)` (paramètre `world_seeds`/`rng_seed` de `AntWorldEnv`) ; la graine d'environnement de SB3 n'est PAS utilisée
+  (elle ferait des seeds consécutives des runs corrélés : seed s et s+1 partageraient des environnements). Courbes sur 10 mondes de VALIDATION fixes ; résultat final sur 20 mondes de TEST. Vérifié par tests (+ mutations).
+- **Politique évaluée : stochastique = RÉFÉRENCE, déterministe (argmax) rapportée aussi.** Décision prise APRÈS avoir vu les résultats du premier run, et assumée comme telle : le diagnostic (`scripts/diagnose_ppo.py`) montre
+  que les politiques entraînées ne sont pas effondrées (entropie 3,8 à 4,6 sur un maximum de 6,87) et que la politique stochastique — celle que PPO optimise réellement — bat son argmax de 2 à 15 points
+  (seed 0 : 115,6 contre 104,3 ; seed 4 : 111,3 contre 96,6 en validation). Sur une action multi-discrète à 5 dimensions, l'argmax par dimension n'est pas l'action la plus probable de la politique jointe et n'est pas ce qui est optimisé.
+  Les deux chiffres sont toujours donnés ; les courbes enregistrent `mean_return` (déterministe) et `mean_return_stochastic`.
+- **Plateau d'exploration** : sur le monde complet les 5 seeds restent ~200-300 k pas autour de 60 (niveau de la stratégie « tout le monde cueille, aucune éclaireuse »), puis découvrent l'exploration et montent.
+  Hypothèse de bug écartée par le diagnostic (entropie élevée, politiques non constantes). Le plateau est une propriété du problème (crédit lointain : une éclaireuse ne paie que plus tard).

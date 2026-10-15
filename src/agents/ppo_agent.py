@@ -57,26 +57,35 @@ class PPOConfig:
 
 
 class PPOAgent:
-    """Enveloppe d'un modèle SB3 à l'interface `Agent` du banc d'évaluation (politique déterministe)."""
+    """Enveloppe d'un modèle SB3 à l'interface `Agent` du banc d'évaluation.
 
-    name = "ppo"
+    deterministic=True : action la plus probable de chaque dimension (argmax) ;
+    deterministic=False : action tirée de la politique, c'est-à-dire la politique que PPO optimise réellement.
+    Pour une action multi-discrète à entropie encore élevée, l'argmax n'est PAS la politique optimisée et peut
+    être nettement moins bon (étape 4 : −5 à −15 points) : on rapporte les deux, la stochastique étant la référence.
+    """
+
     privileged = False
     sim_steps = 0
 
-    def __init__(self, model: PPO, train_env_steps: int = 0) -> None:
+    def __init__(self, model: PPO, train_env_steps: int = 0, deterministic: bool = True) -> None:
         self.model = model
         self.train_env_steps = train_env_steps
+        self.deterministic = deterministic
+        self.name = "ppo" if deterministic else "ppo_stochastic"
 
     def reset(self, agent_seed: int) -> None:
-        pass
+        if not self.deterministic:
+            torch.manual_seed(agent_seed)        # l'échantillonnage utilise le générateur global de torch : le fixer par épisode
 
     def act(self, obs, env=None) -> np.ndarray:
-        action, _ = self.model.predict(obs, deterministic=True)
+        action, _ = self.model.predict(obs, deterministic=self.deterministic)
         return np.asarray(action, dtype=np.int64)
 
     @classmethod
-    def from_file(cls, path: str | Path, device: str = "cpu", train_env_steps: int = 0) -> "PPOAgent":
-        return cls(PPO.load(str(path), device=get_device(device)), train_env_steps)
+    def from_file(cls, path: str | Path, device: str = "cpu", train_env_steps: int = 0,
+                  deterministic: bool = True) -> "PPOAgent":
+        return cls(PPO.load(str(path), device=get_device(device)), train_env_steps, deterministic)
 
 
 def make_vec_env(world_cfg: AntWorldConfig, cfg: PPOConfig, seed: int):
@@ -106,8 +115,9 @@ def build_model(world_cfg: AntWorldConfig, cfg: PPOConfig, seed: int) -> PPO:
                policy_kwargs=policy_kwargs, device=get_device(cfg.device), seed=None, verbose=0)
 
 
-def evaluate_on(model: PPO, world_cfg: AntWorldConfig, world_seeds, agent_seed: int = 0, train_env_steps: int = 0):
-    agent = PPOAgent(model, train_env_steps)
+def evaluate_on(model: PPO, world_cfg: AntWorldConfig, world_seeds, agent_seed: int = 0, train_env_steps: int = 0,
+                deterministic: bool = True):
+    agent = PPOAgent(model, train_env_steps, deterministic)
     return [run_episode(agent, world_cfg, ws, agent_seed) for ws in world_seeds]
 
 
@@ -125,17 +135,19 @@ def train_ppo(world_cfg: AntWorldConfig, cfg: PPOConfig, seed: int, out_dir: str
 
     def evaluate_now() -> None:
         t0 = time.perf_counter()
-        res = evaluate_on(model, world_cfg, val_worlds, seed, model.num_timesteps)
+        res = evaluate_on(model, world_cfg, val_worlds, seed, model.num_timesteps, deterministic=True)
+        sto = evaluate_on(model, world_cfg, val_worlds, seed, model.num_timesteps, deterministic=False)
         rets = np.array([r.ret for r in res])
         rec = {"agent": "ppo", "seed": seed, "train_env_steps": int(model.num_timesteps),
-               "mean_return": float(rets.mean()), "std_return": float(rets.std(ddof=1)),
+               "mean_return": float(rets.mean()), "std_return": float(rets.std(ddof=1)),          # politique déterministe (argmax)
+               "mean_return_stochastic": float(np.mean([r.ret for r in sto])),                    # politique optimisée par PPO
                "mean_pop": float(np.mean([r.mean_pop for r in res])), "wall_s": state["train_wall"],
                "eval_wall_s": time.perf_counter() - t0}
         records.append(rec)
         with curve_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec) + "\n")
-        log(f"[ppo seed {seed}] {rec['train_env_steps']:>9d} pas  retour val {rec['mean_return']:7.1f}  "
-            f"pop moy {rec['mean_pop']:5.1f}  ({rec['wall_s']:.0f} s d'entraînement)")
+        log(f"[ppo seed {seed}] {rec['train_env_steps']:>9d} pas  retour val déterministe {rec['mean_return']:7.1f}  "
+            f"stochastique {rec['mean_return_stochastic']:7.1f}  pop moy {rec['mean_pop']:5.1f}  ({rec['wall_s']:.0f} s d'entraînement)")
         state["next_eval"] += cfg.eval_every
 
     curve_path.write_text("", encoding="utf-8")

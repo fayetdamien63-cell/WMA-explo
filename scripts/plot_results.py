@@ -50,14 +50,15 @@ def plot_series(series_by_agent: dict[str, dict[str, np.ndarray]], axes) -> None
     axes[0].legend()
 
 
-def plot_learning_curves(files: list[Path], ax, ax_time=None, refs: dict[str, float] | None = None) -> None:
+def plot_learning_curves(files: list[Path], ax, ax_time=None, refs: dict[str, float] | None = None,
+                         key: str = "mean_return") -> None:
     """Courbes d'apprentissage : moyenne et IC 95 % (bootstrap) entre seeds, vs pas d'environnement (et vs temps réel)."""
     rows = [json.loads(l) for f in files for l in Path(f).read_text(encoding="utf-8").splitlines() if l.strip()]
     for agent in sorted({r["agent"] for r in rows}):
         pts: dict[int, list[tuple[float, float]]] = {}
         for r in rows:
             if r["agent"] == agent:
-                pts.setdefault(r["train_env_steps"], []).append((r["mean_return"], r.get("wall_s", np.nan)))
+                pts.setdefault(r["train_env_steps"], []).append((r[key], r.get("wall_s", np.nan)))
         xs = sorted(pts)
         m = np.array([np.mean([v for v, _ in pts[x]]) for x in xs])
         lo, hi = np.array([bootstrap_ci(np.array([v for v, _ in pts[x]])) for x in xs]).T
@@ -79,6 +80,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("results_dir", type=Path)
     ap.add_argument("--curves", nargs="*", type=Path, default=[])
+    ap.add_argument("--key", default="mean_return", help="champ des courbes : mean_return (déterministe) ou mean_return_stochastic")
     ap.add_argument("--refs", type=Path, default=None, help="summary.json des agents de référence (lignes horizontales)")
     args = ap.parse_args()
     rows = {}
@@ -93,9 +95,9 @@ def main() -> None:
         if args.refs:
             refs = {n: a["mean"] for n, a in json.loads(args.refs.read_text(encoding="utf-8"))["agents"].items()}
         fig, (ax, ax_time) = plt.subplots(1, 2, figsize=(15, 5))
-        plot_learning_curves(args.curves, ax, ax_time, refs)
+        plot_learning_curves(args.curves, ax, ax_time, refs, args.key)
         fig.tight_layout()
-        out = args.results_dir / "learning_curves.png"
+        out = args.results_dir / ("learning_curves.png" if args.key == "mean_return" else f"learning_curves_{args.key.replace('mean_return_', '')}.png")
         fig.savefig(out, dpi=110)
         print("écrit", out)
         return
