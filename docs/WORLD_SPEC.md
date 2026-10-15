@@ -158,11 +158,11 @@ Population : `n = initial + naissances − morts`.
   niveaux, construction en cours, répartition des rôles, temps écoulé, coût du prochain niveau, cible
   d'exploration. Détail des canaux : en-tête de `src/antworld/observation.py`.
   `obs.fog: false` (config) donne toute la carte (ablation de l'étape 8).
-- **Récompense** : `r = Φ(s') − Φ(s) + w_survive·[vivante]`, `Φ = w_pop·fourmis + w_food·nourriture + w_ore·valeur(minerai)` ;
-  poids par défaut 1,0 / 0,05 / 0,05 ; survie 0,1 par pas. Valeur du minerai : le stock **utile** (coût du prochain
-  niveau de nurserie + de grenier) à pleine valeur, le **surplus** à −0,5 × (une pénalité légère), le
-  minerai investi dans un bâtiment à pleine valeur (construire est neutre, le gain vient de la capacité). Le retour
-  d'un épisode vaut donc `Φ(fin) − Φ(début) + survie` : aucune boucle ne peut créer de récompense gratuite.
+- **Récompense « prospérité »** : `r = w_pop_level·fourmis + Δ(Φ ressources) + w_survive·[vivante]`, `Φ = w_food·nourriture + w_ore·valeur(minerai)` ;
+  poids par défaut 0,0025 par fourmi et par pas / 0,05 / 0,05 ; survie 0,1 par pas. La population est récompensée à chaque pas (aire sous la courbe) :
+  sacrifier la colonie en cours de partie pour l'exploser à la fin ne paie pas (c'était le défaut de la v1, voir DECISIONS.md). Valeur du minerai : le stock **utile**
+  (coût du prochain niveau de nurserie + de grenier) à pleine valeur, le **surplus** à −0,5 × (pénalité légère), le minerai investi dans un bâtiment à pleine valeur
+  (construire est neutre, le gain vient de la capacité). Les stocks sont des potentiels : stocker puis dépenser ne crée aucune récompense.
 - **Sauvegarde/restauration** : `world.snapshot()/restore()/clone()`, `env.get_state()/set_state()` (état
   dynamique + état du générateur aléatoire ; le layout est régénéré depuis la seed).
 

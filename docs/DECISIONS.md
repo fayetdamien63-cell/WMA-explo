@@ -166,4 +166,17 @@ Mesures (20 mondes de test) :
 L'oracle a un retour 63 % supérieur à l'heuristique avec une population moyenne deux fois plus basse, des colonies tombées jusqu'à 2 fourmis (risque d'extinction) et plus du tiers de son score gagné à la toute fin.
 C'est un effet de **fin d'horizon** : légitime pour l'objectif tel que défini, mais très probablement pas ce que « prospérer » veut dire. Conséquences : la borne haute est gonflée par une
 stratégie « sacrifier le présent pour la fin », les écarts entre agents ne mesurent pas seulement la qualité de gestion, un agent appris doit découvrir une stratégie à très long délai (hibernation de ~200 pas) et
-le test anti-triche de l'étape 2 (stratégies codées à la main) ne pouvait pas le voir. **Décision en attente de l'utilisateur** (voir PROGRESS.md).
+le test anti-triche de l'étape 2 (stratégies codées à la main) ne pouvait pas le voir. **Décision de l'utilisateur : récompense « prospérité » (v2), appliquée ci-dessous.**
+
+### Récompense « prospérité » (v2) — décision de l'utilisateur après l'alerte ci-dessus
+`r_t = w_pop_level · fourmis_t + Δ(w_food·nourriture + w_ore·valeur du minerai) + w_survive·[vivante]`, avec `w_pop_level = 0,0025` par fourmi et par pas
+(≈ 64 points pour 64 fourmis sur 400 pas). La population est récompensée **à chaque pas** (aire sous la courbe) ; les stocks restent des potentiels (mêmes valeurs que
+la v1, même pénalité légère du surplus de minerai). Retour = `w_pop_level·Σ fourmis + Φ(fin) − Φ(début) + survie`. Effet mesuré (oracle, 8 mondes d'entraînement) : plus
+de creux (population minimale 93 % de la moyenne), plus d'explosion finale (13-15 % du retour dans les 50 derniers pas, contre 36 %).
+- L'oracle évalue ses séquences avec `reward.sequence_return` (identité télescopique), vérifiée par test égale à la somme des récompenses de l'env.
+- **Garde-fous anti-exploitation ajoutés au banc d'évaluation** : pour chaque épisode `min_pop` (creux après la phase de croissance de 100 pas), `steady_mean_pop`, `late_return_share`
+  (part du retour dans les 50 derniers pas) ; `exploitation_warnings` alerte au-delà de 25 % de gain final ou d'un creux < 35 % de la moyenne, et `run_baselines.py` **invalide la porte** en cas d'alerte.
+  Vérifié rétroactivement : il aurait signalé l'oracle v1 (14 % et 36 %) et aucun des deux autres agents. La phase de croissance est exclue car toutes les colonies démarrent à 12 fourmis.
+- **Test lent d'un optimiseur** (`tests/test_baselines_gate.py`) : un oracle de budget moyen ne doit déclencher aucune alerte et garder une population moyenne ≥ 90 % de celle de l'heuristique.
+  Leçon : un test anti-triche qui n'utilise que des stratégies codées à la main ne voit pas ce qu'un optimiseur trouve.
+- **Heuristique non modifiée** : réévaluée sous la v2 sur les seeds d'entraînement, toutes les variantes testées restent dans le bruit (±2) ; elle obtient 107,7 ± 1,5 sur les 40 mondes d'entraînement.

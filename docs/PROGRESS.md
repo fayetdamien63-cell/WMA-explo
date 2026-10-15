@@ -78,21 +78,22 @@ non potentiel, fuite du brouillard, pénalité de surplus à 0) sont tous détec
 
 Aucune stratégie absurde ne dépasse la référence (en moyenne ni au maximum par seed) ; tous les retours sont sous la borne théorique.
 
-## Étape 3 — résultats (seeds de TEST 1 000 000..1 000 019, récompense v1)
+## Étape 3 — résultats (seeds de TEST 1 000 000..1 000 019, récompense « prospérité » v2)
 
-`pytest` : 136 passés (+ 1 test lent `-m slow`, voir ci-dessous). Évaluation : `python scripts/run_baselines.py --split test --n-worlds 20 --workers 4` (sorties `runs/step3/test/`).
+`pytest` : 151 tests rapides passés (+ 3 tests lents `-m slow`, dont un test d'OPTIMISEUR anti-exploitation). Évaluation : `python scripts/run_baselines.py --split test --n-worlds 20 --workers 4` (sorties `runs/step3/test/`).
 
-| Agent | Retour moyen [IC 95 %] | Écart-type entre mondes | Pop. finale | Colonies mortes | Pas simulés/épisode | Temps/épisode | ms/décision |
+| Agent | Retour moyen [IC 95 %] | Écart-type entre mondes | Pop. moy. / creux (après pas 100) / finale | Colonies mortes | Pas simulés/épisode | Temps/épisode | ms/décision |
 |---|---|---|---|---|---|---|---|
-| aléatoire (5 seeds d'agent × 20 mondes) | 58,3 [54,8 ; 62,2] | 8,4 | 22,9 | 0 % | 0 | 0,1 s | 0,0 |
-| heuristique | 93,3 [89,6 ; 97,1] | 8,8 | 58,6 | 0 % | 0 | 0,1 s | 0,0 |
-| oracle (CEM 64×3, H400, replan 5) | 152,1 [147,2 ; 156,8] | 11,2 | 111,2 | 0 % | 3 110 400 | 198,7 s | 496,6 |
+| aléatoire (5 seeds d'agent × 20 mondes) | 80,7 [76,8 ; 84,7] | 9,1 | 33,3 / 18,3 / 22,9 | 0 % | 0 | 0,1 s | 0,0 |
+| heuristique | 110,4 [106,4 ; 114,4] | 9,2 | 63,8 / 50,0 / 58,6 | 0 % | 0 | 0,1 s | 0,0 |
+| oracle (CEM 64×3, H400, replan 5) | 133,9 [131,8 ; 135,9] | 4,8 | 73,3 / 68,2 / 87,0 | 0 % | 3 110 400 | 381,6 s | 953,7 |
 
-- Différences appariées (IC 95 %) : heuristique − aléatoire **+34,9 [+30,9 ; +39,0]** ; oracle − heuristique **+58,9 [+54,1 ; +63,7]**. L'ordre est net.
-- Score normalisé de l'heuristique (aléatoire = 0, oracle = 1) : **0,37** (seuil fixé à 0,85 avant les mesures) → critère de la porte **atteint… sur le papier** (voir l'alerte ci-dessous).
-- **Variance et nombre de seeds** : l'écart-type du retour entre mondes est de 8 à 11 ; part de variance due au monde pour l'agent aléatoire : 52 % (59,7 entre mondes, 56,1 due à l'aléa de l'agent). Mondes nécessaires pour un IC à 95 % de demi-largeur ≤ 5 % du retour moyen : aléatoire 33, heuristique 14, oracle 9. Pour résoudre des différences d'agents de l'ordre de 10 points, 20 mondes suffisent largement (écart-type des différences appariées ≈ 10) ; **recommandation pour les futures expériences : ≥ 20 mondes de test, appariés, et ≥ 5 seeds d'entraînement par agent appris**.
-- Coût de l'oracle : 3,1 M de pas de simulateur et ~200 s par épisode contre 400 pas d'environnement pour les autres agents → **le comptage des pas d'environnement seul est trompeur pour les planificateurs** ; `sim_steps` et le temps réel sont journalisés à part.
+- Différences appariées (IC 95 %) : heuristique − aléatoire **+29,7 [+25,9 ; +33,5]** ; oracle − heuristique **+23,5 [+20,4 ; +26,7]**. L'ordre est net.
+- Score normalisé de l'heuristique (aléatoire = 0, oracle = 1) : **0,56** (seuil fixé avant les mesures : 0,85) → **PORTE ATTEINTE**.
+- **Diagnostic anti-exploitation : RAS** (population minimale après le pas 100 = 93 % de la moyenne pour l'oracle ; plus de creux ni d'explosion finale). Les courbes montrent un oracle qui fait croître sa population et son stock de nourriture régulièrement, et une heuristique qui culmine (~82 fourmis au pas 100) puis redescend (~58) faute de nourriture : la marge d'amélioration est réelle.
+- **Variance** : 83 % de la variance du retour de l'agent aléatoire vient du MONDE (entre mondes 80,2 ; aléa de l'agent 16,2) → comparaisons appariées indispensables. Mondes nécessaires pour un IC 95 % à ±5 % : aléatoire 20, heuristique 11, oracle 2.
+  **Recommandation pour la suite : ≥ 20 mondes de test appariés, ≥ 5 seeds d'entraînement par agent appris.**
+- Coût de l'oracle : 3,1 M de pas simulés et ~380 s par épisode (4 processus en parallèle) contre 400 pas d'environnement pour les autres : `sim_steps` et le temps réel sont journalisés à part. Budget choisi sur 8 mondes d'entraînement : 64×3, H400, replan 5 → 131,4 ± 3,5 (32×2, H60 : 123,4 ± 4,2 ; 32×2, H400 : 123,4 ± 4,4). Borne haute APPROCHÉE.
 
-### ⚠ Alerte : récompense v1 exploitée par l'oracle (détail et chiffres dans DECISIONS.md)
-Population moyenne de l'oracle sur l'épisode 30,9 (heuristique 63,8) ; minimum jusqu'à 2 fourmis ; 36 % de son retour dans les 50 derniers pas. Il « hiberne » puis explose à la fin.
-La porte est atteinte au sens du critère chiffré, **mais l'écart heuristique/oracle est en grande partie dû à ce comportement**, pas à une meilleure gestion : la marge d'apprentissage est donc surestimée. **Je recommande de corriger la récompense avant de continuer** (options dans le message de fin d'étape). État : en attente de décision.
+### Historique : la récompense v1 était exploitable
+Avec l'ancienne récompense (potentiel de l'état final), l'oracle « hibernait puis explosait » (population moyenne 30,9, creux à 2 fourmis, 36 % du retour dans les 50 derniers pas) pour un retour de 152,1. Résultats v1 conservés dans `runs/step3_v1/` (non versionné). Détail et correction : `docs/DECISIONS.md`.
