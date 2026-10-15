@@ -84,12 +84,13 @@ def _try_generate(cfg: WorldGenConfig, rng: np.random.Generator, seed: int, atte
     f = food_noise[food_cells]
     food_cap[food_cells] = cfg.food_cap_min + (cfg.food_cap_max - cfg.food_cap_min) * (f - f.min()) / max(f.max() - f.min(), 1e-9)
 
-    ore_noise = fractal_noise(s, cfg.ore_scale, cfg.noise_octaves, rng).ravel()
-    rest = np.setdiff1d(candidates, food_cells)
-    ore_cells = _select_zone(ore_noise, rest, n_ore)
     ore_amount = np.zeros(n)
-    o = ore_noise[ore_cells]
-    ore_amount[ore_cells] = cfg.ore_min + (cfg.ore_max - cfg.ore_min) * (o - o.min()) / max(o.max() - o.min(), 1e-9)
+    if n_ore > 0:                                    # ore_fraction = 0 : monde simplifié, nourriture seule
+        ore_noise = fractal_noise(s, cfg.ore_scale, cfg.noise_octaves, rng).ravel()
+        rest = np.setdiff1d(candidates, food_cells)
+        ore_cells = _select_zone(ore_noise, rest, n_ore)
+        o = ore_noise[ore_cells]
+        ore_amount[ore_cells] = cfg.ore_min + (cfg.ore_max - cfg.ore_min) * (o - o.min()) / max(o.max() - o.min(), 1e-9)
 
     layout = make_layout(s, terrain, nest, food_cap, ore_amount, seed=seed, attempts=attempt + 1)
     return layout if playability_problem(layout, cfg) is None else None
@@ -102,12 +103,13 @@ def playability_problem(layout: WorldLayout, cfg: WorldGenConfig) -> str | None:
     ore = (layout.ore_amount > 0) & reach
     if food.sum() < cfg.min_food_cells:
         return f"pas assez de cases de nourriture accessibles ({food.sum()})"
-    if ore.sum() < cfg.min_ore_cells:
-        return f"pas assez de cases de minerai accessibles ({ore.sum()})"
     if layout.nest_dist[food].min() > cfg.max_food_dist:
         return "nourriture trop éloignée du nid"
-    if layout.nest_dist[ore].min() > cfg.max_ore_dist:
-        return "minerai trop éloigné du nid"
+    if cfg.ore_fraction > 0:                         # critères minerai : seulement s'il y en a dans ce monde
+        if ore.sum() < cfg.min_ore_cells:
+            return f"pas assez de cases de minerai accessibles ({ore.sum()})"
+        if layout.nest_dist[ore].min() > cfg.max_ore_dist:
+            return "minerai trop éloigné du nid"
     if reach.sum() < cfg.min_open_fraction * layout.size**2:
         return "trop peu de cases libres"
     return None

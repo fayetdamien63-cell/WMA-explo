@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+from typing import Sequence
 
 import gymnasium as gym
 import numpy as np
@@ -38,8 +39,16 @@ class EnvState:
 class AntWorldEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": 10}
 
-    def __init__(self, cfg: AntWorldConfig | None = None, render_mode: str | None = None) -> None:
+    def __init__(self, cfg: AntWorldConfig | None = None, render_mode: str | None = None,
+                 world_seeds: Sequence[int] | None = None, rng_seed: int = 0) -> None:
+        """`world_seeds` : pool de mondes (p. ex. les seeds d'ENTRAÎNEMENT) dans lequel `reset()` sans seed tire
+        un monde ; `rng_seed` fixe ce tirage (flux indépendant de celui de Gymnasium, donc de toute seed passée
+        par une bibliothèque tierce). Sans pool, un monde quelconque est tiré du générateur de l'env."""
         super().__init__()
+        self._pool = None if world_seeds is None else np.asarray(list(world_seeds), dtype=np.int64)
+        if self._pool is not None and len(self._pool) == 0:
+            raise ValueError("world_seeds ne doit pas être vide")
+        self._pool_rng = np.random.default_rng(rng_seed)
         self.cfg = copy.deepcopy(cfg) if cfg is not None else AntWorldConfig()
         if not self.cfg.obs.fog:
             # Sans brouillard : le nid « voit » toute la carte à chaque tick (ablation de l'étape 8).
@@ -62,9 +71,15 @@ class AntWorldEnv(gym.Env):
     # ------------------------------------------------------------------ cycle de vie
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         """Nouveau monde. `seed` fixe exactement le monde généré (et l'aléa de la partie) ;
-        sans seed, le monde est tiré du générateur de l'env (reproductible via `reset(seed=...)` initial)."""
+        sans seed : tirage dans le pool `world_seeds` s'il y en a un, sinon dans le générateur de l'env
+        (reproductible via un `reset(seed=...)` initial)."""
         super().reset(seed=seed)
-        self.world_seed = int(seed) if seed is not None else int(self.np_random.integers(0, 2**31 - 1))
+        if seed is not None:
+            self.world_seed = int(seed)
+        elif self._pool is not None:
+            self.world_seed = int(self._pool_rng.choice(self._pool))
+        else:
+            self.world_seed = int(self.np_random.integers(0, 2**31 - 1))
         self.world = AntWorld.from_seed(self.cfg, self.world_seed)
         return self._observe(), self._info()
 

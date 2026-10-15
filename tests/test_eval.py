@@ -159,10 +159,10 @@ def test_plot_scripts_run_on_saved_results(tmp_path, monkeypatch):
     curve = tmp_path / "ppo_curve.jsonl"
     curve.write_text("\n".join(json.dumps({"agent": "ppo", "seed": s, "train_env_steps": x, "mean_return": 50 + x / 1000 + s})
                                for s in (0, 1) for x in (1000, 2000, 3000)), encoding="utf-8")
-    for extra in ([], ["--curves", str(curve)]):
+    for extra, expected in (([], "overview.png"), (["--curves", str(curve)], "learning_curves.png")):
         monkeypatch.setattr(sys, "argv", ["plot_results", str(tmp_path), *extra])
         plot_results.main()
-        assert (tmp_path / "overview.png").stat().st_size > 5000
+        assert (tmp_path / expected).stat().st_size > 5000
 
 
 def test_exploitation_warnings_flag_hibernate_then_boom_and_stay_quiet_otherwise():

@@ -1,0 +1,36 @@
+# Version SIMPLIFIÉE du monde (étape 4) : 1 ressource (nourriture), pas de brouillard.
+# Sert à vérifier que la plomberie d'apprentissage (PPO) fonctionne avant d'attaquer le monde complet.
+# Pas de minerai => pas de bâtiments : la population est plafonnée à base_pop_cap (40) ; les actions de minerai
+# et de construction sont sans effet (l'agent doit apprendre à les ignorer).
+world:
+  size: 32
+  rock_fraction: 0.16
+  terrain_scale: 8.0
+  food_fraction: 0.14
+  food_cap_min: 8.0
+  food_cap_max: 16.0
+  food_regrow_rate: 0.01
+  food_regrow_seed: 0.05
+  ore_fraction: 0.0
+colony:
+  initial_ants: 12
+  initial_food: 30.0
+  eat_rate: 0.02
+  carry_capacity: 2
+  lay_rate: 0.25
+  birth_cost: 4.0
+  base_pop_cap: 40
+  nursery_gain: 20
+  base_food_storage: 60.0
+  granary_gain: 60.0
+sim:
+  ticks_per_step: 5
+  max_steps: 400
+reward:
+  w_pop_level: 0.0025
+  w_food: 0.05
+  w_ore: 0.05
+  ore_surplus_penalty: 0.5
+  w_survive: 0.1
+obs:
+  fog: false

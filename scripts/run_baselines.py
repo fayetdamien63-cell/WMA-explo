@@ -34,10 +34,12 @@ def main() -> None:
     ap.add_argument("--agents", default=",".join(AGENT_NAMES))
     ap.add_argument("--random-agent-seeds", type=int, default=5, help="seeds d'agent pour l'agent aléatoire (mesure de variance)")
     ap.add_argument("--workers", type=int, default=1)
+    ap.add_argument("--world-config", type=Path, default=ROOT / "configs" / "antworld.yaml",
+                    help="monde évalué (configs/antworld_simple.yaml : version simplifiée de l'étape 4)")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
-    world_cfg = load_config(AntWorldConfig, ROOT / "configs" / "antworld.yaml")
+    world_cfg = load_config(AntWorldConfig, args.world_config)
     baselines = load_config(BaselinesConfig, ROOT / "configs" / "baselines.yaml")
     worlds = SPLITS[args.split](args.n_worlds)
     out = args.out or ROOT / "runs" / "step3" / args.split

@@ -1,0 +1,23 @@
+# PPO (stable-baselines3) — baseline sans modèle du monde (étape 4).
+total_steps: 300000      # monde simplifié ; le monde complet demande bien plus (voir scripts/train_ppo.py)
+n_envs: 8
+n_steps: 128             # lot de 1024 transitions par mise à jour
+batch_size: 256
+n_epochs: 4
+learning_rate: 0.0003
+gamma: 0.995
+gae_lambda: 0.95
+clip_range: 0.2
+ent_coef: 0.01
+vf_coef: 0.5
+max_grad_norm: 0.5
+reward_norm: true
+cnn_channels: [16, 32, 32]
+map_dim: 128
+state_dim: 64
+net_arch: [128, 128]
+train_pool_size: 1000    # mondes d'entraînement : seeds 0..999 (jamais celles de validation/test)
+eval_every: 20000
+eval_worlds: 10          # mondes de VALIDATION de la courbe d'apprentissage
+device: auto
+torch_threads: 1

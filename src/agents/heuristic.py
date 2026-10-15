@@ -64,7 +64,9 @@ class HeuristicAgent:
         known_frac = float(known.mean())
 
         # --- éclaireuses -----------------------------------------------------------------------
-        if known_frac >= c.explored_enough:
+        if float(m[ob.CH_VISIBLE].mean()) > 0.99:
+            scout = 0                          # on voit toute la carte (monde sans brouillard) : explorer ne sert à rien
+        elif known_frac >= c.explored_enough:
             scout = c.scout_level_late
         elif food_seen < c.few_food_cells or s[ob.S_FOOD] < c.hungry_food * s[ob.S_STORAGE_CAP]:
             scout = c.scout_level_early

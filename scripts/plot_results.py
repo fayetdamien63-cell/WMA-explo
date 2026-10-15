@@ -50,24 +50,36 @@ def plot_series(series_by_agent: dict[str, dict[str, np.ndarray]], axes) -> None
     axes[0].legend()
 
 
-def plot_learning_curves(files: list[Path], ax) -> None:
+def plot_learning_curves(files: list[Path], ax, ax_time=None, refs: dict[str, float] | None = None) -> None:
+    """Courbes d'apprentissage : moyenne et IC 95 % (bootstrap) entre seeds, vs pas d'environnement (et vs temps réel)."""
     rows = [json.loads(l) for f in files for l in Path(f).read_text(encoding="utf-8").splitlines() if l.strip()]
     for agent in sorted({r["agent"] for r in rows}):
-        pts: dict[int, list[float]] = {}
+        pts: dict[int, list[tuple[float, float]]] = {}
         for r in rows:
             if r["agent"] == agent:
-                pts.setdefault(r["train_env_steps"], []).append(r["mean_return"])
+                pts.setdefault(r["train_env_steps"], []).append((r["mean_return"], r.get("wall_s", np.nan)))
         xs = sorted(pts)
-        m = np.array([np.mean(pts[x]) for x in xs]); lo, hi = np.array([bootstrap_ci(np.array(pts[x])) for x in xs]).T
+        m = np.array([np.mean([v for v, _ in pts[x]]) for x in xs])
+        lo, hi = np.array([bootstrap_ci(np.array([v for v, _ in pts[x]])) for x in xs]).T
         ax.plot(xs, m, label=agent, color=COLORS.get(agent)); ax.fill_between(xs, lo, hi, alpha=0.2, color=COLORS.get(agent))
-    ax.set_xlabel("pas d'environnement d'entraînement consommés"); ax.set_ylabel("retour moyen (éval)")
-    ax.set_title("Courbes d'apprentissage"); ax.legend(); ax.grid(alpha=0.3)
+        wall = np.array([np.nanmean([w for _, w in pts[x]]) for x in xs])
+        if ax_time is not None and not np.isnan(wall).all():
+            ax_time.plot(wall, m, label=agent, color=COLORS.get(agent)); ax_time.fill_between(wall, lo, hi, alpha=0.2, color=COLORS.get(agent))
+    for name, value in (refs or {}).items():
+        for a in (ax, ax_time):
+            if a is not None:
+                a.axhline(value, linestyle="--", color=COLORS.get(name, "gray"), alpha=0.8, label=f"{name} (référence)")
+    ax.set_xlabel("pas d'environnement d'entraînement consommés"); ax.set_ylabel("retour moyen (mondes de validation)")
+    ax.set_title("Courbes d'apprentissage : efficacité en échantillons"); ax.legend(); ax.grid(alpha=0.3)
+    if ax_time is not None:
+        ax_time.set_xlabel("temps d'entraînement réel (s)"); ax_time.set_title("... et en temps réel"); ax_time.grid(alpha=0.3)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("results_dir", type=Path)
     ap.add_argument("--curves", nargs="*", type=Path, default=[])
+    ap.add_argument("--refs", type=Path, default=None, help="summary.json des agents de référence (lignes horizontales)")
     args = ap.parse_args()
     rows = {}
     for p in sorted(args.results_dir.glob("*.jsonl")):
@@ -76,14 +88,24 @@ def main() -> None:
             rows[p.stem] = records
     series = {p.name.replace("_series.npz", ""): dict(np.load(p)) for p in sorted(args.results_dir.glob("*_series.npz"))}
 
+    if args.curves:                                              # mode courbes d'apprentissage
+        refs = None
+        if args.refs:
+            refs = {n: a["mean"] for n, a in json.loads(args.refs.read_text(encoding="utf-8"))["agents"].items()}
+        fig, (ax, ax_time) = plt.subplots(1, 2, figsize=(15, 5))
+        plot_learning_curves(args.curves, ax, ax_time, refs)
+        fig.tight_layout()
+        out = args.results_dir / "learning_curves.png"
+        fig.savefig(out, dpi=110)
+        print("écrit", out)
+        return
+
     fig = plt.figure(figsize=(16, 9))
     gs = fig.add_gridspec(2, 3)
     plot_returns(rows, fig.add_subplot(gs[0, 0]))
     plot_series(series, [fig.add_subplot(gs[1, i]) for i in range(3)])
     ax = fig.add_subplot(gs[0, 1:])
-    if args.curves:
-        plot_learning_curves(args.curves, ax)
-    elif {"heuristic", "oracle"} <= set(rows):                       # appariement par monde : heuristique vs oracle
+    if {"heuristic", "oracle"} <= set(rows):                       # appariement par monde : heuristique vs oracle
         h = {r["world_seed"]: r["ret"] for r in rows["heuristic"]}
         o = {}
         for r in rows["oracle"]:
