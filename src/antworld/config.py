@@ -26,10 +26,10 @@ class WorldGenConfig:
     food_cap_max: float = 16.0
     food_regrow_rate: float = 0.01      # g : vitesse de repousse logistique (par tick)
     food_regrow_seed: float = 0.05      # s : « graine » permettant de repartir de 0 (fraction de cap)
-    ore_fraction: float = 0.04
+    ore_fraction: float = 0.02
     ore_scale: float = 5.0
-    ore_min: float = 10.0
-    ore_max: float = 25.0
+    ore_min: float = 8.0
+    ore_max: float = 18.0
     min_resource_dist: int = 3          # pas de ressource à moins de n pas (chemin) du nid
     max_food_dist: int = 14             # critères de jouabilité
     max_ore_dist: int = 22
@@ -78,10 +78,32 @@ class SimConfig:
 
 
 @dataclass
+class RewardConfig:
+    """Pondérations de la récompense (voir antworld/reward.py).
+
+    récompense = Φ(état suivant) − Φ(état) + w_survive, avec
+    Φ = w_pop·fourmis + w_food·nourriture_en_stock + w_ore·valeur_du_minerai.
+    """
+
+    w_pop: float = 1.0              # par fourmi
+    w_food: float = 0.05            # par unité de nourriture en stock
+    w_ore: float = 0.05             # par unité de minerai utile ou investi dans un bâtiment
+    ore_surplus_penalty: float = 0.5  # le minerai en surplus vaut −0.5 · w_ore par unité (pénalité légère)
+    w_survive: float = 0.1          # bonus par pas macro où la colonie est vivante
+
+
+@dataclass
+class ObsConfig:
+    fog: bool = True                # False : la colonie connaît toute la carte (ablation « sans brouillard »)
+
+
+@dataclass
 class AntWorldConfig:
     world: WorldGenConfig = field(default_factory=WorldGenConfig)
     colony: ColonyConfig = field(default_factory=ColonyConfig)
     sim: SimConfig = field(default_factory=SimConfig)
+    reward: RewardConfig = field(default_factory=RewardConfig)
+    obs: ObsConfig = field(default_factory=ObsConfig)
 
     def __post_init__(self) -> None:
         c = self.colony

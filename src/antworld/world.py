@@ -6,6 +6,9 @@ tableaux d'état, tire les nombres aléatoires, et expose des propriétés lisib
 
 from __future__ import annotations
 
+import copy
+from dataclasses import dataclass
+
 import numpy as np
 
 from antworld import indices as ix
@@ -18,6 +21,22 @@ from common.seeding import SeedManager
 # ACT_BUILD_CHOICE, ACT_TARGET).
 N_BUILD_CHOICES = 3
 N_TARGETS = 5
+
+
+@dataclass(frozen=True)
+class WorldState:
+    """Photographie complète de l'état dynamique d'une partie (le layout et la config sont immuables).
+
+    Contient aussi l'état du générateur aléatoire : restaurer puis rejouer les mêmes actions redonne
+    exactement la même suite. Nécessaire à l'oracle (planifier avec le vrai simulateur).
+    """
+
+    grid: np.ndarray
+    flow: np.ndarray
+    ants: np.ndarray
+    col: np.ndarray
+    rng_state: dict
+    macro_step: int
 
 
 def build_params(cfg: AntWorldConfig) -> np.ndarray:
@@ -100,6 +119,31 @@ class AntWorld:
         """Monde + aléa de simulation entièrement déterminés par `seed`."""
         layout = generate_world(cfg.world, seed)
         return cls(layout, cfg, SeedManager(seed).rng("sim"))
+
+    # ------------------------------------------------------------------ sauvegarde / restauration
+    def snapshot(self) -> WorldState:
+        """Copie indépendante de tout l'état dynamique."""
+        return WorldState(self.grid.copy(), self.flow.copy(), self.ants.copy(), self.col.copy(),
+                          copy.deepcopy(self._rng.bit_generator.state), self.macro_step)
+
+    def restore(self, state: WorldState) -> None:
+        """Remet la partie exactement dans l'état photographié (le snapshot n'est pas modifié)."""
+        np.copyto(self.grid, state.grid)
+        np.copyto(self.flow, state.flow)
+        np.copyto(self.ants, state.ants)
+        np.copyto(self.col, state.col)
+        self._rng.bit_generator.state = copy.deepcopy(state.rng_state)
+        self.macro_step = state.macro_step
+
+    def clone(self) -> "AntWorld":
+        """Partie indépendante, dans le même état (le layout immuable est partagé : pas de régénération)."""
+        new = copy.copy(self)
+        new._P = self._P.copy()
+        new._rng = np.random.Generator(type(self._rng.bit_generator)())
+        new.grid, new.flow, new.ants, new.col = (self.grid.copy(), self.flow.copy(),
+                                                 self.ants.copy(), self.col.copy())
+        new._rng.bit_generator.state = copy.deepcopy(self._rng.bit_generator.state)
+        return new
 
     # ------------------------------------------------------------------ action et avancement
     @property

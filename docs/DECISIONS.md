@@ -59,7 +59,7 @@ Format : décision — raison. Les plus récentes en bas.
 - **Validation de config** : stock initial ≤ capacité de stockage, population initiale ≤ capacité, etc. —
   trouvée utile pendant le développement (un test avait une config incohérente).
 
-### Problèmes de conception repérés (à traiter avant/à l'étape 2)
+### Problèmes de conception repérés à l'étape 1 (traités à l'étape 2 : voir plus bas)
 1. **Le minerai n'a plus d'usage une fois les 8 niveaux construits** : une politique aléatoire finit avec
    180 de minerai en stock en moyenne (326 pour une politique qui construit), alors que 250 suffisent pour tout
    construire. Si la récompense compte « ressources accumulées » en incluant le minerai, **accumuler du
@@ -71,3 +71,35 @@ Format : décision — raison. Les plus récentes en bas.
    (minerai). La marge réelle sera mesurée à l'étape 3 (porte heuristique/oracle).
 3. La quantité totale de nourriture est quasi constante d'un monde à l'autre (112 à 122 cases) : les mondes
    varient par la forme et les distances, pas par l'abondance. Acceptable pour l'instant.
+
+## Étape 2
+
+- **Minerai (décision de l'utilisateur) : il peut compter dans la récompense, mais le surplus est légèrement
+  pénalisant ; la quantité par monde est réduite.** `ore_fraction` 0,04 → 0,02 et quantités 10–25 → 8–18 :
+  ~196 de minerai par monde (avant : 507) pour 250 nécessaires pour tout construire.
+- **Récompense = différence de potentiel + bonus de survie** (`reward.py`). Φ = 1,0·fourmis + 0,05·nourriture +
+  0,05·valeur du minerai. Retour d'épisode = Φ(fin) − Φ(début) + survie : pas de boucle exploitable *par
+  construction*. La « croissance de population » est le terme Δ(fourmis) ; « ressources accumulées » = Δ(stocks).
+- **Valeur du minerai** : stock utile (prochain niveau de nurserie + de grenier) à pleine valeur ; surplus à
+  −0,5 × valeur ; minerai investi dans un bâtiment à pleine valeur (construire est neutre pour la récompense, le
+  gain vient de la capacité). Effet mesuré : thésauriser ~189 minerai fait perdre 3 points sur ~69 (légère).
+- **Observation = la connaissance de la colonie, pas la vérité terrain** : carte 8 canaux (visible à l'instant,
+  connue, roche connue, nourriture/minerai *dernières valeurs vues*, nid, éclaireuses, autres fourmis) + 24 scalaires
+  d'état interne. On donne les dernières quantités vues (carte de la colonie) mais pas leur âge : l'agent n'est pas
+  privé de mémoire à ce point, mais le monde reste partiellement observable (cases cachées, valeurs périmées).
+- **`Dict` d'observations (carte + état)** plutôt qu'un vecteur aplati — la carte pourra passer dans un CNN
+  (étapes 5–7). Pour PPO/SB3 (étape 4), un extracteur de caractéristiques dédié sera nécessaire (le CNN par défaut
+  de SB3 exige ≥ 36 pixels de côté).
+- **Sans brouillard = nid avec vision sur toute la carte** (`obs.fog: false`) : aucun code supplémentaire dans le noyau.
+- **`reset(seed)` : la seed fixe exactement le monde** (et l'aléa de la partie). Sans seed, un monde est tiré
+  du générateur de l'env. La liste de seeds d'entraînement/test sera gérée par le banc d'évaluation (étape 3).
+- **État sauvegardé = tableaux dynamiques + état du générateur aléatoire ; le layout est régénéré depuis la seed**
+  (`EnvState`), donc restaurable dans un autre processus ou un autre env. `clone()` partage le layout (pas de régénération).
+- **Test anti-triche** (`eval/anticheat.py`, `scripts/anticheat_report.py`) : 2 références + 9 stratégies absurdes
+  sur 20 seeds, plus une borne supérieure théorique du retour.
+
+### Bug trouvé et corrigé pendant l'étape 2
+Une éclaireuse *chargée* ne révélait qu'un rayon de 1 dans le simulateur mais l'observation lui en attribuait 2 :
+l'observation déclarait « visible » des cases jamais vues. Attrapé par le test « le brouillard ne fuit pas », qui
+ne le voyait que sur certaines trajectoires (d'où des seeds de test plus nombreuses). Règle unifiée : la vision ne
+dépend que du rôle.

@@ -246,7 +246,9 @@ def tick(grid, flow, ants, col, terrain, food_cap, food_cells, nest_next, nest, 
     for i in range(n):
         cell = ants[i, A_CELL]
         role = ants[i, A_ROLE]
-        vision = int(P[P_FORAGER_VIS])
+        # La vision ne dépend que du rôle (même chargée, une éclaireuse voit loin) : l'observation
+        # de la colonie (observation.py) utilise exactement la même règle.
+        vision = int(P[P_SCOUT_VIS]) if role == ROLE_SCOUT else int(P[P_FORAGER_VIS])
 
         if ants[i, A_LOAD] > 0:
             # Règle 1 : une fourmi chargée rentre au nid et dépose, quel que soit son rôle.
@@ -268,7 +270,6 @@ def tick(grid, flow, ants, col, terrain, food_cap, food_cells, nest_next, nest, 
 
         elif role == ROLE_SCOUT:
             # Éclaireuse : marche aléatoire persistante, biaisée vers la direction cible.
-            vision = int(P[P_SCOUT_VIS])
             heading = ants[i, A_HEADING]
             if rand_t[i, 0] < P[P_TURN_PROB]:
                 if target_dir > 0 and rand_t[i, 1] < P[P_BIAS]:

@@ -23,7 +23,9 @@ individuelles exécutent ensuite des règles simples pendant `ticks_per_step` (=
   fourmis et où se font les constructions.
 - **Nourriture** : certaines cases sont des *zones de nourriture*, avec une capacité `cap` propre à la
   case (8 à 16). Une case démarre pleine.
-- **Minerai** : cases disjointes de la nourriture, avec une quantité initiale (10 à 25). **Ne repousse jamais.**
+- **Minerai** : cases disjointes de la nourriture, avec une quantité initiale (8 à 18). **Ne repousse jamais.**
+  Environ 16 cases et **~196 unités par monde** (166 à 223 sur 200 seeds) : il en faut 250 pour tout construire,
+  donc la nurserie (150) est finançable mais pas tout : arbitrage nurserie / grenier.
 
 ### Génération procédurale (`generate_world(cfg, seed)`)
 
@@ -34,7 +36,7 @@ Tout vient de `SeedManager(seed).rng("worldgen/<tentative>")`.
 3. Toute case libre **inaccessible depuis le nid** devient roche (pas de poches isolées).
 4. Nourriture : bruit de Perlin → les `food_fraction` (14 %) cases accessibles au bruit le plus élevé,
    hors du voisinage immédiat du nid (distance de chemin ≥ `min_resource_dist` = 3). Capacité proportionnelle
-   au bruit. Minerai : idem sur les cases restantes, `ore_fraction` (4 %), avec un autre bruit.
+   au bruit. Minerai : idem sur les cases restantes, `ore_fraction` (2 %), avec un autre bruit.
 5. **Test de jouabilité** : assez de cases accessibles (≥ 60 % de la grille), nourriture et minerai
    accessibles, nourriture la plus proche à ≤ 14 pas du nid et minerai à ≤ 22, au moins 12 cases de
    nourriture et 4 de minerai. Sinon on retire une nouvelle tentative (≤ 50), puis erreur.
@@ -63,7 +65,7 @@ Une fourmi sur une case contenant au moins 1 unité en prend `min(carry_capacity
   **dernière quantité vue** par case (`seen`). Elle peut être périmée : la nourriture a pu repousser
   ou être mangée depuis.
 - À chaque tick, chaque fourmi révèle le carré de rayon `forager_vision` (1) autour d'elle, `scout_vision`
-  (2) pour les éclaireuses ; le nid révèle un rayon `nest_vision` (5) en permanence. La vision traverse
+  (2) pour les éclaireuses (la vision ne dépend que du rôle, même quand la fourmi porte une charge) ; le nid révèle un rayon `nest_vision` (5) en permanence. La vision traverse
   la roche (simplification).
 - Les fourmis connaissent le terrain réel (elles retrouvent leur chemin), mais **ne vont que vers des
   ressources qu'elles croient présentes** (`seen ≥ 1`).
@@ -147,7 +149,24 @@ Compteurs cumulés dans l'état. Pour la nourriture :
 Pour le minerai : `monde = initial − récolté` ; `récolté = livré + perdu + porté` ; `stock = livré − dépensé`.
 Population : `n = initial + naissances − morts`.
 
-## 10. Hors périmètre de l'étape 1 (ajouts par paliers plus tard)
+## 10. Interface agent (étape 2 : `antworld.env.AntWorldEnv`)
+
+- **Action** : `MultiDiscrete([4,4,4,3,5])` (§7). **Épisode** : `terminated` si la colonie meurt, `truncated` à 400 pas.
+- **Observation** (partielle, float32 dans [0,1]) : `map` (8, 32, 32) et `state` (24,). La colonie observe sa
+  *propre connaissance* : cases déjà vues, dernières quantités vues (périmées possible), zone visible à
+  l'instant, position de ses fourmis ; rien de ce qui est dans le brouillard. `state` = effectifs, stocks,
+  niveaux, construction en cours, répartition des rôles, temps écoulé, coût du prochain niveau, cible
+  d'exploration. Détail des canaux : en-tête de `src/antworld/observation.py`.
+  `obs.fog: false` (config) donne toute la carte (ablation de l'étape 8).
+- **Récompense** : `r = Φ(s') − Φ(s) + w_survive·[vivante]`, `Φ = w_pop·fourmis + w_food·nourriture + w_ore·valeur(minerai)` ;
+  poids par défaut 1,0 / 0,05 / 0,05 ; survie 0,1 par pas. Valeur du minerai : le stock **utile** (coût du prochain
+  niveau de nurserie + de grenier) à pleine valeur, le **surplus** à −0,5 × (une pénalité légère), le
+  minerai investi dans un bâtiment à pleine valeur (construire est neutre, le gain vient de la capacité). Le retour
+  d'un épisode vaut donc `Φ(fin) − Φ(début) + survie` : aucune boucle ne peut créer de récompense gratuite.
+- **Sauvegarde/restauration** : `world.snapshot()/restore()/clone()`, `env.get_state()/set_state()` (état
+  dynamique + état du générateur aléatoire ; le layout est régénéré depuis la seed).
+
+## 11. Hors périmètre de l'étape 1 (ajouts par paliers plus tard)
 
 Champignon à cultiver (investissement puis gain différé), chasse (risquée mais rentable), prédateurs,
 plusieurs colonies, changement de règles en cours de partie (la nourriture cesse de repousser — étape 8).

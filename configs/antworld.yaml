@@ -10,9 +10,9 @@ world:
   food_cap_max: 16.0
   food_regrow_rate: 0.01
   food_regrow_seed: 0.05
-  ore_fraction: 0.04
-  ore_min: 10.0
-  ore_max: 25.0
+  ore_fraction: 0.02   # ~16 cases, ~196 de minerai par monde (il en faut 250 pour tout construire)
+  ore_min: 8.0
+  ore_max: 18.0
 colony:
   initial_ants: 12
   initial_food: 30.0
@@ -27,3 +27,11 @@ colony:
 sim:
   ticks_per_step: 5
   max_steps: 400
+reward:
+  w_pop: 1.0
+  w_food: 0.05
+  w_ore: 0.05
+  ore_surplus_penalty: 0.5   # minerai au-delà du « stock utile » : -0.5 * w_ore par unité
+  w_survive: 0.1
+obs:
+  fog: true

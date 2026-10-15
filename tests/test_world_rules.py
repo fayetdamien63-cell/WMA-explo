@@ -164,3 +164,15 @@ def test_invalid_actions_rejected():
     for bad in ([0, 0, 0, 0], [4, 0, 0, 0, 0], [0, 0, 0, 3, 0], [0, 0, 0, 0, 5], [-1, 0, 0, 0, 0]):
         with pytest.raises(ValueError):
             w.step(bad)
+
+
+def test_vision_depends_on_role_only_even_when_carrying():
+    """Une éclaireuse chargée voit à son rayon d'éclaireuse (cohérent avec l'observation de la colonie)."""
+    w = make_arena(size=20, nest=(10, 10), initial_ants=1, nest_vision=1, scout_vision=3, ticks=1)
+    w.ants[0, ix.A_LOAD], w.ants[0, ix.A_LOAD_TYPE] = 1, ix.R_FOOD
+    w.ants[0, ix.A_CELL] = 5 * 20 + 5                    # loin du nid, chargée
+    w.step([3, 0, 0, 0, 0])                              # 50 % de 1 fourmi -> round(0.5) = 1 éclaireuse
+    assert w.ants[0, ix.A_ROLE] == ix.ROLE_SCOUT
+    y, x = divmod(int(w.ants[0, ix.A_CELL]), 20)
+    known = w.grid[ix.G_KNOWN].reshape(20, 20)
+    assert known[y - 3: y + 4, x - 3: x + 4].all()       # rayon 3 révélé malgré la charge
