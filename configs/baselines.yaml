@@ -16,11 +16,11 @@ heuristic:
 oracle:
   perfect_foresight: false   # false : l'oracle ne connaît pas les futurs tirages aléatoires de la partie réelle
   cem:
-    horizon: 30
+    horizon: 400        # jusqu'à la fin de l'épisode (borné par les pas restants)
     block: 5
     n_samples: 64
     n_iters: 3
     n_elites: 8
     smoothing: 0.5
-    replan_every: 5
+    replan_every: 5     # replanifier souvent compte plus que le nombre d'échantillons (cf. docs/DECISIONS.md)
     min_prob: 0.02

@@ -22,7 +22,7 @@ import numpy as np
 
 @dataclass
 class CEMConfig:
-    horizon: int = 30            # pas macro planifiés
+    horizon: int = 30            # pas macro planifiés (l'oracle utilise 400 = tout l'épisode : voir configs/baselines.yaml)
     block: int = 5               # un même vecteur d'action tenu `block` pas
     n_samples: int = 64          # séquences évaluées par itération
     n_iters: int = 3
