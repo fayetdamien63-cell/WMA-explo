@@ -36,11 +36,16 @@ def main() -> None:
     ap.add_argument("--workers", type=int, default=1)
     ap.add_argument("--world-config", type=Path, default=ROOT / "configs" / "antworld.yaml",
                     help="monde évalué (configs/antworld_simple.yaml : version simplifiée de l'étape 4)")
+    ap.add_argument("--oracle-budget", default=None, metavar="ÉCHANTILLONS,ITÉRATIONS,HORIZON,REPLAN",
+                    help="surcharge le budget de l'oracle, p. ex. 32,2,60,5 (monde simplifié : budget réduit suffisant)")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
     world_cfg = load_config(AntWorldConfig, args.world_config)
     baselines = load_config(BaselinesConfig, ROOT / "configs" / "baselines.yaml")
+    if args.oracle_budget:
+        c = baselines.oracle.cem
+        c.n_samples, c.n_iters, c.horizon, c.replan_every = (int(v) for v in args.oracle_budget.split(","))
     worlds = SPLITS[args.split](args.n_worlds)
     out = args.out or ROOT / "runs" / "step3" / args.split
     agents = args.agents.split(",")
