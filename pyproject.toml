@@ -12,12 +12,13 @@ dependencies = [
     "numpy>=1.26",
     "pyyaml>=6.0",
     "torch>=2.2",
+    "numba>=0.60",   # noyau du simulateur (étape 1) : mesure NumPy pur dans docs/DECISIONS.md
 ]
 
 [project.optional-dependencies]
 env = ["gymnasium>=0.29"]                        # étape 2
 rl = ["stable-baselines3>=2.3", "tensorboard"]   # étapes 4 et suivantes
-viz = ["matplotlib", "pygame"]                   # rendu / courbes
+viz = ["matplotlib", "pillow"]                   # rendu, GIF, courbes (pygame possible plus tard)
 dev = ["pytest>=8"]
 
 [tool.setuptools.packages.find]

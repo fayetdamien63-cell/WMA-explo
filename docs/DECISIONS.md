@@ -25,3 +25,49 @@ Format : décision — raison. Les plus récentes en bas.
   utilise. Numba : seulement si le test de performance de l'étape 1 l'exige.
 - **PyTorch hors des index par défaut documenté dans le README** — la roue dépend de la plateforme
   (CUDA sur Windows, MPS sur Mac).
+
+## Étape 1
+
+- **Actions : `MultiDiscrete([4,4,4,3,5])` (960 combinaisons), validé par l'utilisateur** — parts d'éclaireuses,
+  de bâtisseuses et de minerai par paliers, choix de construction, direction d'exploration. Les
+  allocations continues (curiosité de l'utilisateur) sont reportées après l'étape 3 ou à l'étape 9.
+- **Récompense, grille 32×32, 2 ressources, brouillard dès le début : confirmés par l'utilisateur.**
+- **Numba pour le noyau de simulation** — la règle était « Numba seulement si le test de perf l'exige ».
+  Mesure préalable en NumPy pur (scratchpad, non conservée) : un seul champ de flux BFS vectorisé coûte
+  279 µs (le budget total d'un pas macro pour 5 000 pas/s est de 200 µs) et un tick vectorisé *très
+  réduit* (sans naissances, rôles, construction, famine) coûte déjà 16 µs, soit 80 µs par pas de 5 ticks.
+  Avec toutes les règles NumPy pur ne pouvait pas tenir la cible. Résultat avec Numba : ~15 000 pas/s.
+  Débogage possible sans compilation : `NUMBA_DISABLE_JIT=1` (trajectoire vérifiée identique bit à bit).
+- **Fourmis individuelles explicites** (case, rôle, charge, cap) plutôt qu'un modèle agrégé de « voyages » :
+  plus lisible, rendu fidèle, et prépare l'extension « fourmis individuelles à politique partagée » (étape 9).
+- **État = 4 tableaux NumPy (`grid`, `flow`, `ants`, `col`) + constantes d'indices nommées** (`indices.py`) —
+  compatible Numba, sauvegarde/restauration d'état = copie de tableaux (étape 2), peu d'arguments au noyau.
+- **L'aléa du noyau est pré-tiré côté Python** (`rng.random((ticks, n+ticks, 3))` par pas macro) — pas de
+  générateur caché dans Numba, tout vient du `SeedManager` (flux « worldgen/k » et « sim »).
+- **Pas macro = 5 ticks, épisode = 400 pas macro** — assez long pour des dynamiques lentes (repousse :
+  ~300 ticks = 60 pas macro) et des horizons du world model de 10 à 50 pas ; modifiable dans la config.
+- **Les fourmis connaissent le terrain réel mais pas les ressources** : le brouillard cache *où sont les
+  ressources* (carte `seen`, éventuellement périmée), pas la topologie. Évite des fourmis bloquées sur
+  « ressource vue mais chemin inconnu » ; la vision traverse la roche (simplification).
+- **Famine déterministe** (accumulateur, pas de tirage aléatoire) ; les dernières nées meurent d'abord —
+  mort = simple décrément du compteur de population, pas de compactage de tableau.
+- **Repousse logistique avec terme « graine »** — une case surexploitée repart lentement (dynamique lente
+  voulue) mais repart.
+- **Constructions** (nurserie → capacité de population, grenier → stockage de nourriture), niveaux 0 à 4, à
+  coût croissant en minerai : donne un usage au minerai et un compromis réel (investir du travail et
+  des cueilleuses dans la construction plutôt que dans la nourriture).
+- **Validation de config** : stock initial ≤ capacité de stockage, population initiale ≤ capacité, etc. —
+  trouvée utile pendant le développement (un test avait une config incohérente).
+
+### Problèmes de conception repérés (à traiter avant/à l'étape 2)
+1. **Le minerai n'a plus d'usage une fois les 8 niveaux construits** : une politique aléatoire finit avec
+   180 de minerai en stock en moyenne (326 pour une politique qui construit), alors que 250 suffisent pour tout
+   construire. Si la récompense compte « ressources accumulées » en incluant le minerai, **accumuler du
+   minerai inutile serait récompensé** (récompense exploitable). Piste : ne pas inclure le minerai dans la récompense
+   (sa valeur passe par la population via la nurserie), ou le plafonner. À trancher à l'étape 2 avec le test anti-triche.
+2. **Plafond de population de base (40) trop vite atteint** : la règle fixe « 10 % d'éclaireuses, tout
+   le reste en nourriture » atteint 39,5 fourmis en moyenne sur 20 seeds (0 % de colonies mortes),
+   contre 28,4 pour l'aléatoire. La marge pour un agent plus fin dépend donc surtout de la nurserie
+   (minerai). La marge réelle sera mesurée à l'étape 3 (porte heuristique/oracle).
+3. La quantité totale de nourriture est quasi constante d'un monde à l'autre (112 à 122 cases) : les mondes
+   varient par la forme et les distances, pas par l'abondance. Acceptable pour l'instant.

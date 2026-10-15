@@ -19,9 +19,11 @@ PyTorch dépend de la machine — l'installer d'abord, puis le projet :
 - **CPU seul** : `pip install torch --index-url https://download.pytorch.org/whl/cpu`
 
 ```bash
-pip install -e ".[dev]"      # ajouter les extras voulus : env, rl, viz
+pip install -e ".[dev,viz]"  # extras : dev (pytest), viz (rendu/GIF), env, rl (étapes suivantes)
 pytest                       # lance tous les tests
 python scripts/check_determinism.py --seed 42
+python scripts/bench_sim.py                       # vitesse du simulateur sur cette machine
+python scripts/play_random.py --seed 3            # partie aléatoire -> runs/step1/*.gif et *.png
 ```
 
 ## Conventions
