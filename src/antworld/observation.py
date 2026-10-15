@@ -27,6 +27,15 @@ from antworld.world import AntWorld
 
 N_MAP_CHANNELS = 8
 N_STATE = 24
+
+# Indices du vecteur `state` (valeurs normalisées dans [0, 1]). Les grandeurs de même nature partagent la
+# même référence de normalisation : on peut donc les comparer directement (p. ex. S_ORE >= S_NEXT_NURSERY).
+S_POP, S_POP_CAP, S_FOOD, S_STORAGE_CAP, S_ORE = 0, 1, 2, 3, 4
+S_NURSERY, S_GRANARY = 5, 6
+S_BUILD_ACTIVE, S_BUILD_NURSERY, S_BUILD_GRANARY, S_BUILD_PROGRESS = 7, 8, 9, 10
+S_ROLES = slice(11, 15)                  # parts : cueilleuses nourriture, minerai, éclaireuses, bâtisseuses
+S_CARRYING, S_TIME, S_NEXT_NURSERY, S_NEXT_GRANARY = 15, 16, 17, 18
+S_TARGET = slice(19, 24)                 # cible d'exploration courante (one-hot)
 CH_VISIBLE, CH_KNOWN, CH_ROCK, CH_FOOD, CH_ORE, CH_NEST, CH_SCOUT, CH_OTHER = range(8)
 
 

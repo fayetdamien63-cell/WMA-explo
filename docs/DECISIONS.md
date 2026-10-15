@@ -103,3 +103,26 @@ Une éclaireuse *chargée* ne révélait qu'un rayon de 1 dans le simulateur mai
 l'observation déclarait « visible » des cases jamais vues. Attrapé par le test « le brouillard ne fuit pas », qui
 ne le voyait que sur certaines trajectoires (d'où des seeds de test plus nombreuses). Règle unifiée : la vision ne
 dépend que du rôle.
+
+## Étape 3
+
+- **Interface `Agent`** : `reset(agent_seed)`, `act(obs, env=None)`, compteurs `sim_steps` (pas de simulateur consommés pour
+  planifier) et `train_env_steps` (pas d'environnement d'entraînement). Seul un agent `privileged` reçoit l'env (l'oracle) ; le harnais
+  passe `None` aux autres, vérifié par un test espion : l'heuristique et les agents appris ne peuvent pas tricher.
+- **Heuristique = observation partielle uniquement** (carte + état interne), pour que ce soit une comparaison équitable avec les agents
+  appris. Constantes dans `HeuristicConfig` / `configs/baselines.yaml`, **réglées sur les seeds d'entraînement (0..39)**, jamais sur celles de test.
+  Enseignement du réglage : *arrêter les éclaireuses une fois la carte explorée est une grosse erreur* (66 → 95 de retour) car la carte de la colonie
+  se périme (la nourriture repousse, mais personne ne repasse voir les cases vues vides) : les éclaireuses servent aussi à rafraîchir la carte.
+  Les autres variantes testées (±1 palier, seuils) étaient dans le bruit (±2) : non retenues pour ne pas surajuster.
+- **Seeds : trois plages disjointes** (`eval/seeds.py`) : entraînement [0, 100 000), validation [500 000, ...), test [1 000 000, ...).
+  Le test vérifie la disjonction. Réglages et budgets sur train/val ; résultats rapportés sur test uniquement.
+- **L'aléa d'un épisode dérive de (seed d'agent, seed du monde)** : le résultat ne dépend ni de l'ordre d'évaluation ni du parallélisme (testé : séquentiel = parallèle).
+- **Parallélisme par `ProcessPoolExecutor` en mode `spawn`** — portable Mac / Windows / Linux ; l'agent est reconstruit dans chaque worker à partir de son nom et de la config (picklable).
+- **Statistiques sans scipy** : IC à 95 % par bootstrap percentile (10 000 rééchantillonnages, seed fixe → déterministe, couverture vérifiée ≈ 95 % par simulation),
+  comparaisons **appariées** (mêmes mondes : la variance entre mondes est grande, l'appariement la neutralise), nombre de mondes nécessaire = (1,96·σ/h)².
+- **Oracle = CEM sur le vrai simulateur** (`agents/planning.py` générique + `agents/oracle.py`) : il voit tout le monde (même le brouillard) et simule la
+  dynamique exacte, mais **ne connaît pas les futurs tirages aléatoires** de la partie réelle (`perfect_foresight: false`, chaque simulation de planification
+  utilise un aléa différent) : sinon il exploiterait le hasard futur, ce qui n'a aucun sens pour un agent. Même planificateur qu'à l'étape 6 (seule la fonction de simulation change).
+- **Plan par blocs de 5 pas** (une action tenue 5 pas macro) : les rôles changent lentement ; divise par 5 la dimension de recherche. MPC : on exécute 5 pas puis on replanifie, en réutilisant la distribution décalée.
+- **Tests « lents »** (`pytest -m slow`) exclus du `pytest` par défaut : évaluations multi-seeds avec l'oracle (~minutes).
+- **Critère de la porte fixé avant de voir les chiffres** : sur les seeds de test, ordre aléatoire < heuristique < oracle avec IC 95 % des différences appariées > 0, et heuristique ≤ 85 % de l'écart aléatoire→oracle.

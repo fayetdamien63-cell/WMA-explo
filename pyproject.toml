@@ -26,4 +26,5 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+addopts = "-ra -m \"not slow\""
+markers = ["slow: tests longs (oracle, évaluations multi-seeds) ; lancer avec -m slow"]

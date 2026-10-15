@@ -1,0 +1,26 @@
+# Réglages des agents de référence (étape 3).
+# Les constantes de l'heuristique ont été réglées sur des seeds d'ENTRAÎNEMENT (jamais sur les seeds de test).
+heuristic:
+  scout_level_early: 2
+  scout_level_mid: 1
+  scout_level_late: 1
+  few_food_cells: 10
+  explored_enough: 0.80
+  hungry_food: 0.10
+  ore_level: 1
+  ore_surplus_margin: 1.0
+  nursery_pop_ratio: 0.85
+  granary_food_ratio: 0.80
+  builders_level: 2
+  directed_exploration: true
+oracle:
+  perfect_foresight: false   # false : l'oracle ne connaît pas les futurs tirages aléatoires de la partie réelle
+  cem:
+    horizon: 30
+    block: 5
+    n_samples: 64
+    n_iters: 3
+    n_elites: 8
+    smoothing: 0.5
+    replan_every: 5
+    min_prob: 0.02
