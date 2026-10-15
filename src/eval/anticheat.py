@@ -58,16 +58,17 @@ STRATEGIES: dict[str, tuple[str, Policy]] = {
 def episode_return_bound(env: AntWorldEnv) -> float:
     """Borne supérieure théorique du retour (sans aucune hypothèse sur l'agent).
 
-    Φ final ≤ w_pop · population_max + w_food · stockage_max + w_ore · minerai_total_du_monde,
-    donc retour ≤ Φ_max − Φ_0 + w_survive · max_steps.
+    retour = w_pop_level · Σ fourmis + Φ(fin) − Φ(début) + w_survive · pas_vivants avec
+    fourmis ≤ population_max, Φ(fin) ≤ w_food · stockage_max + w_ore · minerai_total_du_monde,
+    donc retour ≤ T · (w_pop_level · population_max + w_survive) + Φ_max − Φ_0.
     """
     w, cfg = env.world, env.cfg
     c, rc = cfg.colony, cfg.reward
     pop_max = c.base_pop_cap + c.max_building_level * c.nursery_gain
     storage_max = c.base_food_storage + c.max_building_level * c.granary_gain
     ore_total = float(w.layout.ore_amount.sum()) + c.initial_ore
-    phi_max = rc.w_pop * pop_max + rc.w_food * storage_max + rc.w_ore * ore_total
-    return phi_max - potential(w, rc) + rc.w_survive * cfg.sim.max_steps
+    phi_max = rc.w_food * storage_max + rc.w_ore * ore_total
+    return cfg.sim.max_steps * (rc.w_pop_level * pop_max + rc.w_survive) + phi_max - potential(w, rc)
 
 
 def run_episode(cfg: AntWorldConfig, policy: Policy, seed: int) -> dict[str, float]:
@@ -76,17 +77,19 @@ def run_episode(cfg: AntWorldConfig, policy: Policy, seed: int) -> dict[str, flo
     bound = episode_return_bound(env)
     phi0 = potential(env.world, cfg.reward)
     rng = np.random.default_rng(seed)
-    total, t, terminated = 0.0, 0, False
+    total, t, terminated, pop_sum = 0.0, 0, False, 0
     while True:
         _, r, terminated, truncated, info = env.step(policy(env.world, t, rng))
         total += r
+        pop_sum += info["n_ants"]
         t += 1
         if terminated or truncated:
             break
     w = env.world
     return {"return": total, "bound": bound, "steps": t, "dead": float(terminated), "pop": w.n_ants,
             "ore": w.ore_stock, "levels": w.nursery_level + w.granary_level,
-            "telescoped": potential(w, cfg.reward) - phi0 + cfg.reward.w_survive * (t - (1 if terminated else 0))}
+            "telescoped": cfg.reward.w_pop_level * pop_sum + potential(w, cfg.reward) - phi0
+                          + cfg.reward.w_survive * (t - (1 if terminated else 0))}
 
 
 def evaluate(cfg: AntWorldConfig, seeds=range(20)) -> dict[str, dict[str, float]]:

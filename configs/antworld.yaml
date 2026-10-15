@@ -28,7 +28,7 @@ sim:
   ticks_per_step: 5
   max_steps: 400
 reward:
-  w_pop: 1.0
+  w_pop_level: 0.0025   # par fourmi et par pas : la prospérité compte tout au long de la partie
   w_food: 0.05
   w_ore: 0.05
   ore_surplus_penalty: 0.5   # minerai au-delà du « stock utile » : -0.5 * w_ore par unité

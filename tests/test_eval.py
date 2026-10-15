@@ -7,8 +7,8 @@ from agents.factory import BaselinesConfig
 from agents.heuristic import HeuristicAgent
 from agents.random_agent import RandomAgent
 from eval import seeds as sd
-from eval.harness import (evaluate, load_results, log_tensorboard, returns_by_world, run_episode,
-                          save_results)
+from eval.harness import (evaluate, exploitation_warnings, load_results, log_tensorboard, returns_by_world,
+                          run_episode, save_results)
 from eval.stats import (bootstrap_ci, paired_difference, seeds_needed, summarize,
                         variance_decomposition)
 from helpers import default_cfg
@@ -123,7 +123,7 @@ def test_save_and_load_roundtrip_with_nan_padding(tmp_path):
     path = save_results(res, tmp_path, "demo")
     rows = load_results(path)
     assert [r["world_seed"] for r in rows] == [1, 2] and rows[1]["terminated"] and not rows[0]["terminated"]
-    assert set(rows[0]) >= {"ret", "steps", "final_pop", "env_steps", "sim_steps", "train_env_steps", "wall_s", "decision_ms"}
+    assert set(rows[0]) >= {"ret", "steps", "final_pop", "min_pop", "steady_mean_pop", "late_return_share", "env_steps", "sim_steps", "train_env_steps", "wall_s", "decision_ms"}
     z = np.load(tmp_path / "demo_series.npz")
     assert z["pop"].shape == (2, CFG.sim.max_steps)
     assert np.isnan(z["pop"][1, rows[1]["steps"]:]).all() and not np.isnan(z["pop"][0]).any()
@@ -163,3 +163,19 @@ def test_plot_scripts_run_on_saved_results(tmp_path, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["plot_results", str(tmp_path), *extra])
         plot_results.main()
         assert (tmp_path / "overview.png").stat().st_size > 5000
+
+
+def test_exploitation_warnings_flag_hibernate_then_boom_and_stay_quiet_otherwise():
+    import dataclasses
+    honest = run_episode(HeuristicAgent(world_cfg=CFG), CFG, 3)
+    assert honest.min_pop > 0 and 0 <= honest.late_return_share < 0.25 and not exploitation_warnings([honest])
+    # Épisode fabriqué comme celui de l'oracle v1 : creux à 4 fourmis (moyenne 31), 36 % du retour à la fin.
+    boom = dataclasses.replace(honest, agent="fake", min_pop=4, steady_mean_pop=31.0, late_return_share=0.36)
+    warnings = exploitation_warnings([boom])
+    assert len(warnings) == 2 and all(w.startswith("fake") for w in warnings)
+
+
+def test_late_return_share_and_min_pop_are_computed_from_the_episode():
+    r = run_episode(HeuristicAgent(world_cfg=CFG), CFG, 5)
+    assert r.min_pop == int(np.min(r.series["pop"][100:])) and r.steady_mean_pop == pytest.approx(float(np.mean(r.series["pop"][100:])), rel=1e-5)
+    assert r.late_return_share == pytest.approx(float(np.sum(r.series["reward"][-50:])) / r.ret, rel=1e-4)

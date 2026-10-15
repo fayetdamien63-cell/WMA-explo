@@ -17,7 +17,7 @@ import numpy as np
 from agents.factory import AGENT_NAMES, BaselinesConfig
 from antworld import AntWorldConfig
 from common.config import load_config
-from eval.harness import evaluate, log_tensorboard, returns_by_world, save_results
+from eval.harness import evaluate, exploitation_warnings, log_tensorboard, returns_by_world, save_results
 from eval.seeds import test_seeds, train_seeds, val_seeds
 from eval.stats import paired_difference, seeds_needed, summarize, variance_decomposition
 
@@ -55,20 +55,21 @@ def main() -> None:
     # ---- tableau principal --------------------------------------------------------------------
     per_world = {n: returns_by_world(results[n], n, worlds) for n in agents}
     lines = [f"Split : {args.split} ({args.n_worlds} mondes, seeds {worlds[0]}..{worlds[-1]})", "",
-             "| agent | retour moyen [IC 95 %] | écart-type entre mondes | survie (pas) | colonies mortes | pop. finale | pas d'env (éval) | pas simulés/épisode | temps/épisode | ms/décision |",
+             "| agent | retour moyen [IC 95 %] | écart-type entre mondes | survie (pas) | colonies mortes | pop. moy. / creux (après pas 100) / finale | pas d'env (éval) | pas simulés/épisode | temps/épisode | ms/décision |",
              "|---|---|---|---|---|---|---|---|---|---|"]
     summary = {"split": args.split, "n_worlds": args.n_worlds, "agents": {}}
     for n in agents:
         s, rs = summarize(per_world[n]), results[n]
         row = {"mean": s.mean, "ci_low": s.ci_low, "ci_high": s.ci_high, "std_between_worlds": s.std,
                "steps": float(np.mean([r.steps for r in rs])), "dead": float(np.mean([r.terminated for r in rs])),
-               "final_pop": float(np.mean([r.final_pop for r in rs])), "env_steps": float(np.mean([r.env_steps for r in rs])),
+               "final_pop": float(np.mean([r.final_pop for r in rs])), "mean_pop": float(np.mean([r.mean_pop for r in rs])),
+               "min_pop": float(np.mean([r.min_pop for r in rs])), "steady_mean_pop": float(np.mean([r.steady_mean_pop for r in rs])), "late_return_share": float(np.mean([r.late_return_share for r in rs])), "env_steps": float(np.mean([r.env_steps for r in rs])),
                "sim_steps": float(np.mean([r.sim_steps for r in rs])), "wall_s": float(np.mean([r.wall_s for r in rs])),
                "decision_ms": float(np.mean([r.decision_ms for r in rs])),
                "seeds_for_5pct_ci": seeds_needed(s.std, 0.05 * abs(s.mean))}
         summary["agents"][n] = row
         lines.append(f"| {n} | {s.mean:.1f} [{s.ci_low:.1f}, {s.ci_high:.1f}] | {s.std:.1f} | {row['steps']:.0f} | "
-                     f"{100 * row['dead']:.0f} % | {row['final_pop']:.1f} | {row['env_steps']:.0f} | {row['sim_steps']:.0f} | "
+                     f"{100 * row['dead']:.0f} % | {row['mean_pop']:.1f} / {row['min_pop']:.1f} / {row['final_pop']:.1f} | {row['env_steps']:.0f} | {row['sim_steps']:.0f} | "
                      f"{row['wall_s']:.1f} s | {row['decision_ms']:.1f} |")
 
     # ---- comparaisons appariées et porte ------------------------------------------------------
@@ -92,6 +93,15 @@ def main() -> None:
         lines += ["", f"Score normalisé de l'heuristique (aléatoire = 0, oracle = 1) : {norm:.2f} (seuil {GATE_MAX_NORMALIZED_HEURISTIC})",
                   f"Ordre aléatoire < heuristique < oracle net (IC 95 % des différences appariées > 0) : {'oui' if ordered else 'NON'}",
                   f"PORTE : {'ATTEINTE' if passed else 'NON ATTEINTE'}"]
+
+    # ---- alertes d'exploitation de la récompense ----------------------------------------------------
+    warnings = [w for n in agents for w in exploitation_warnings(results[n])]
+    summary["exploitation_warnings"] = warnings
+    lines += ["", "Diagnostic anti-exploitation (part du retour dans les 50 derniers pas, creux de population) : " +
+              ("RAS" if not warnings else "ALERTE")] + [f"- {w}" for w in warnings]
+    if warnings and "gate" in summary:
+        summary["gate"]["passed"] = False
+        lines.append("PORTE INVALIDÉE : un agent exploite la récompense, l'écart heuristique/oracle n'est pas fiable.")
 
     # ---- variance entre seeds (agent aléatoire : plusieurs seeds d'agent par monde) --------------
     if "random" in results and args.random_agent_seeds > 1:

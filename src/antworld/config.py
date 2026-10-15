@@ -79,15 +79,17 @@ class SimConfig:
 
 @dataclass
 class RewardConfig:
-    """Pondérations de la récompense (voir antworld/reward.py).
+    """Pondérations de la récompense « prospérité » (voir antworld/reward.py).
 
-    récompense = Φ(état suivant) − Φ(état) + w_survive, avec
-    Φ = w_pop·fourmis + w_food·nourriture_en_stock + w_ore·valeur_du_minerai.
+    r_t = w_pop_level · fourmis_t  +  Δ(w_food · nourriture + w_ore · valeur_du_minerai)  +  w_survive · [vivante]
+
+    La population est récompensée À CHAQUE PAS (aire sous la courbe) : sacrifier la colonie en cours de partie
+    pour la faire exploser à la fin ne paie pas. Les stocks restent des différences de potentiel.
     """
 
-    w_pop: float = 1.0              # par fourmi
-    w_food: float = 0.05            # par unité de nourriture en stock
-    w_ore: float = 0.05             # par unité de minerai utile ou investi dans un bâtiment
+    w_pop_level: float = 0.0025     # par fourmi et par pas macro (≈ 64 points pour 64 fourmis sur 400 pas)
+    w_food: float = 0.05            # par unité de nourriture en stock (potentiel : seule la variation compte)
+    w_ore: float = 0.05             # par unité de minerai utile ou investi dans un bâtiment (potentiel)
     ore_surplus_penalty: float = 0.5  # le minerai en surplus vaut −0.5 · w_ore par unité (pénalité légère)
     w_survive: float = 0.1          # bonus par pas macro où la colonie est vivante
 

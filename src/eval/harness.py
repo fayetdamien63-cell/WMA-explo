@@ -28,6 +28,12 @@ from antworld.env import AntWorldEnv
 from common.seeding import SeedManager
 
 SERIES_KEYS = ("pop", "food", "ore", "reward")
+WARMUP = 100                      # phase de croissance initiale ignorée pour le creux de population
+LATE_WINDOW = 50                  # « fin d'épisode » = les 50 derniers pas macro
+
+# Seuils d'alerte d'exploitation (voir `exploitation_warnings`) :
+MAX_LATE_SHARE = 0.25             # plus d'un quart du retour gagné dans les 50 derniers pas (sur 400) : suspect
+MIN_POP_RATIO = 0.35              # population minimale < 35 % de la population moyenne : colonie « sacrifiée »
 
 
 @dataclass
@@ -41,6 +47,9 @@ class EpisodeResult:
     final_pop: int
     mean_pop: float
     max_pop: int
+    min_pop: int                # population minimale APRÈS la phase de croissance (pas WARMUP..fin) : détecte l'« hibernation »
+    steady_mean_pop: float      # population moyenne sur la même fenêtre (pas WARMUP..fin)
+    late_return_share: float    # part du retour gagnée dans les 50 derniers pas (détecte l'exploitation de la fin d'épisode)
     final_food: float
     final_ore: float
     nursery: int
@@ -76,9 +85,12 @@ def run_episode(agent, cfg: AntWorldConfig, world_seed: int, agent_seed: int = 0
             series[k].append(v)
     steps = info["step"]
     pop = np.array(series["pop"], dtype=float)
+    late = float(np.sum(series["reward"][-LATE_WINDOW:]))
+    steady = pop[WARMUP:] if len(pop) > WARMUP else pop      # toutes les colonies démarrent à 12 fourmis : on ignore la croissance initiale
     return EpisodeResult(
         agent=agent.name, world_seed=world_seed, agent_seed=agent_seed, ret=float(ret), steps=steps,
-        terminated=bool(terminated), final_pop=int(pop[-1]), mean_pop=float(pop.mean()), max_pop=int(pop.max()),
+        terminated=bool(terminated), final_pop=int(pop[-1]), mean_pop=float(pop.mean()), max_pop=int(pop.max()), min_pop=int(steady.min()), steady_mean_pop=float(steady.mean()),
+        late_return_share=late / ret if abs(ret) > 1e-9 else 0.0,
         final_food=float(info["food"]), final_ore=float(info["ore"]), nursery=info["nursery"],
         granary=info["granary"], env_steps=steps, train_env_steps=int(agent.train_env_steps),
         sim_steps=int(agent.sim_steps - sim0), wall_s=time.perf_counter() - t0,
@@ -154,3 +166,23 @@ def returns_by_world(results, agent: str, world_seeds) -> np.ndarray:
             raise KeyError(f"pas de résultat pour {agent} sur le monde {ws}")
         out.append(float(np.mean(vals)))
     return np.array(out)
+
+
+def exploitation_warnings(results: list[EpisodeResult]) -> list[str]:
+    """Signaux qu'un agent exploite la définition de la récompense plutôt que de bien gérer la colonie.
+
+    Leçon de l'étape 3 : un oracle optimisant l'ancienne récompense (état final seul) faisait tomber la colonie à
+    2-8 fourmis puis la faisait exploser dans les derniers pas. On surveille donc, par agent :
+      - la part du retour gagnée dans les 50 derniers pas,
+      - le creux de population par rapport à la population moyenne.
+    """
+    warnings = []
+    for agent in sorted({r.agent for r in results}):
+        rs = [r for r in results if r.agent == agent]
+        late = float(np.mean([r.late_return_share for r in rs]))
+        ratio = float(np.mean([r.min_pop / max(r.steady_mean_pop, 1e-9) for r in rs]))
+        if late > MAX_LATE_SHARE:
+            warnings.append(f"{agent} : {100 * late:.0f} % du retour gagné dans les {LATE_WINDOW} derniers pas (seuil {100 * MAX_LATE_SHARE:.0f} %)")
+        if ratio < MIN_POP_RATIO:
+            warnings.append(f"{agent} : population minimale (après le pas {WARMUP}) = {100 * ratio:.0f} % de la population moyenne sur la même période (seuil {100 * MIN_POP_RATIO:.0f} %)")
+    return warnings

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from agents.planning import CEMConfig, cem_plan, shift_probs
-from antworld.reward import potential
+from antworld.reward import potential, sequence_return
 from common.seeding import SeedManager
 
 
@@ -56,7 +56,8 @@ class OracleAgent:
         horizon = min(cfg.horizon, world.cfg.sim.max_steps - world.macro_step)
         work = world.clone()                       # monde de travail : l'état réel n'est jamais touché
         start = world.snapshot()
-        phi0, survive = potential(world, env.cfg.reward), env.cfg.reward.w_survive
+        rc = env.cfg.reward
+        phi0 = potential(world, rc)
         sim_rng_seeds = self._seeds.child(f"plan/{self._n_plans}")
         counter = [0]
 
@@ -67,11 +68,12 @@ class OracleAgent:
                 if not self.cfg.perfect_foresight:
                     work._rng = sim_rng_seeds.rng(f"rollout/{counter[0]}")
                 counter[0] += 1
-                alive_steps = 0
+                alive_steps, pop_sum = 0, 0
                 for a in seq:
                     work.step(a)
                     alive_steps += work.alive
-                returns[i] = potential(work, env.cfg.reward) - phi0 + survive * alive_steps
+                    pop_sum += work.n_ants
+                returns[i] = sequence_return(phi0, work, pop_sum, alive_steps, rc)
             self.sim_steps += len(seqs) * len(seqs[0])
             return returns
 
