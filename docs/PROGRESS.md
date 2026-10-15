@@ -77,3 +77,22 @@ non potentiel, fuite du brouillard, pénalité de surplus à 0) sont tous détec
 | tous au minerai / minerai + 10 % éclaireuses / personne ne cueille | −5,3 à −5,7 | 0 | – | 100 % |
 
 Aucune stratégie absurde ne dépasse la référence (en moyenne ni au maximum par seed) ; tous les retours sont sous la borne théorique.
+
+## Étape 3 — résultats (seeds de TEST 1 000 000..1 000 019, récompense v1)
+
+`pytest` : 136 passés (+ 1 test lent `-m slow`, voir ci-dessous). Évaluation : `python scripts/run_baselines.py --split test --n-worlds 20 --workers 4` (sorties `runs/step3/test/`).
+
+| Agent | Retour moyen [IC 95 %] | Écart-type entre mondes | Pop. finale | Colonies mortes | Pas simulés/épisode | Temps/épisode | ms/décision |
+|---|---|---|---|---|---|---|---|
+| aléatoire (5 seeds d'agent × 20 mondes) | 58,3 [54,8 ; 62,2] | 8,4 | 22,9 | 0 % | 0 | 0,1 s | 0,0 |
+| heuristique | 93,3 [89,6 ; 97,1] | 8,8 | 58,6 | 0 % | 0 | 0,1 s | 0,0 |
+| oracle (CEM 64×3, H400, replan 5) | 152,1 [147,2 ; 156,8] | 11,2 | 111,2 | 0 % | 3 110 400 | 198,7 s | 496,6 |
+
+- Différences appariées (IC 95 %) : heuristique − aléatoire **+34,9 [+30,9 ; +39,0]** ; oracle − heuristique **+58,9 [+54,1 ; +63,7]**. L'ordre est net.
+- Score normalisé de l'heuristique (aléatoire = 0, oracle = 1) : **0,37** (seuil fixé à 0,85 avant les mesures) → critère de la porte **atteint… sur le papier** (voir l'alerte ci-dessous).
+- **Variance et nombre de seeds** : l'écart-type du retour entre mondes est de 8 à 11 ; part de variance due au monde pour l'agent aléatoire : 52 % (59,7 entre mondes, 56,1 due à l'aléa de l'agent). Mondes nécessaires pour un IC à 95 % de demi-largeur ≤ 5 % du retour moyen : aléatoire 33, heuristique 14, oracle 9. Pour résoudre des différences d'agents de l'ordre de 10 points, 20 mondes suffisent largement (écart-type des différences appariées ≈ 10) ; **recommandation pour les futures expériences : ≥ 20 mondes de test, appariés, et ≥ 5 seeds d'entraînement par agent appris**.
+- Coût de l'oracle : 3,1 M de pas de simulateur et ~200 s par épisode contre 400 pas d'environnement pour les autres agents → **le comptage des pas d'environnement seul est trompeur pour les planificateurs** ; `sim_steps` et le temps réel sont journalisés à part.
+
+### ⚠ Alerte : récompense v1 exploitée par l'oracle (détail et chiffres dans DECISIONS.md)
+Population moyenne de l'oracle sur l'épisode 30,9 (heuristique 63,8) ; minimum jusqu'à 2 fourmis ; 36 % de son retour dans les 50 derniers pas. Il « hiberne » puis explose à la fin.
+La porte est atteinte au sens du critère chiffré, **mais l'écart heuristique/oracle est en grande partie dû à ce comportement**, pas à une meilleure gestion : la marge d'apprentissage est donc surestimée. **Je recommande de corriger la récompense avant de continuer** (options dans le message de fin d'étape). État : en attente de décision.

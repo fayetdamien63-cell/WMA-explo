@@ -126,3 +126,44 @@ dépend que du rôle.
 - **Plan par blocs de 5 pas** (une action tenue 5 pas macro) : les rôles changent lentement ; divise par 5 la dimension de recherche. MPC : on exécute 5 pas puis on replanifie, en réutilisant la distribution décalée.
 - **Tests « lents »** (`pytest -m slow`) exclus du `pytest` par défaut : évaluations multi-seeds avec l'oracle (~minutes).
 - **Critère de la porte fixé avant de voir les chiffres** : sur les seeds de test, ordre aléatoire < heuristique < oracle avec IC 95 % des différences appariées > 0, et heuristique ≤ 85 % de l'écart aléatoire→oracle.
+
+### Budget de l'oracle (mesuré sur 8 mondes d'ENTRAÎNEMENT 0..7 ; heuristique sur les mêmes : 99,5)
+Échantillons × itérations, horizon en pas macro, replanification tous les `r` pas. Retour moyen ± erreur standard, temps total pour 8 épisodes sur 4 cœurs :
+
+| Configuration | Retour | Temps |
+|---|---|---|
+| 64×3, H15 | 101,5 ± 6,1 | 62 s |
+| 64×3, H30 | 110,0 ± 3,8 | 121 s |
+| 64×3, H30, **hasard futur connu** | 110,9 ± 2,9 | 126 s |
+| 32×2, H30 | 108,5 ± 4,8 | 40 s |
+| 128×4, H30 | 113,9 ± 4,4 | 365 s |
+| 64×3, H45 | 122,6 ± 4,9 | 176 s |
+| 32×2, H60 / H80 / H120 | 126,2 / 129,2 / 136,2 | 72 / 94 / 135 s |
+| 64×3, H60 | 130,3 ± 3,7 | 231 s |
+| 32×2, H120, replan 10 | 122,4 ± 5,0 | 70 s |
+| 32×2, H200 / H400, replan 10 | 127,8 / 138,2 ± 7,1 | 76 / 72 s |
+| 64×3, H400, replan 10 | 145,5 ± 5,9 | 214 s |
+| 128×3, H400, replan 10 | 148,6 ± 5,8 | 434 s |
+| **64×3, H400, replan 5 (retenu)** | **153,2 ± 5,9** | 428 s |
+
+Lectures : (1) l'**horizon** compte beaucoup plus que le nombre d'échantillons (+50 points de H15 à H400) ; (2) **replanifier plus souvent** aide
+(+8 de replan 10 à 5) ; (3) le nombre d'échantillons est quasi saturé (128×3 ≈ 64×3, dans le bruit) ; (4) connaître le hasard futur ne change presque rien
+(+0,9, dans le bruit), donc le choix de ne pas le donner à l'oracle ne le pénalise pas. Retenu : 64×3, horizon = tout l'épisode, replanification tous les 5 pas (≈ 200 s/épisode).
+**L'oracle reste une borne haute APPROCHÉE : son score augmentait encore avec le calcul quand on s'est arrêté.**
+
+### ⚠ Problème de conception détecté à l'étape 3 : la récompense v1 encourage « hiberner puis exploser »
+La récompense par potentiel (étape 2) fait que le retour d'un épisode = Φ(état final) − Φ(état initial) + survie : **seul l'état à la fin compte**, pas la trajectoire.
+L'oracle (qui voit tout et planifie jusqu'à la fin de l'épisode) en tire une stratégie que ni l'heuristique ni nos stratégies « absurdes » codées à la main n'avaient testée :
+il garde la colonie minuscule pendant une grande partie de la partie (les cases de nourriture se reconstituent à pleine capacité), puis la fait exploser dans les ~50 derniers pas.
+Mesures (20 mondes de test) :
+
+| Agent | Retour | Population MOYENNE sur l'épisode | Population minimale (moy., plus bas) | Population finale | Part du retour dans les 50 derniers pas |
+|---|---|---|---|---|---|
+| aléatoire | 58,3 | 33,3 | 12,4 (6) | 22,9 | 8 % |
+| heuristique | 93,3 | 63,8 | 13,0 (13) | 58,7 | 2 % |
+| oracle | 152,1 | **30,9** | **4,7 (2)** | 111,2 | **36 %** |
+
+L'oracle a un retour 63 % supérieur à l'heuristique avec une population moyenne deux fois plus basse, des colonies tombées jusqu'à 2 fourmis (risque d'extinction) et plus du tiers de son score gagné à la toute fin.
+C'est un effet de **fin d'horizon** : légitime pour l'objectif tel que défini, mais très probablement pas ce que « prospérer » veut dire. Conséquences : la borne haute est gonflée par une
+stratégie « sacrifier le présent pour la fin », les écarts entre agents ne mesurent pas seulement la qualité de gestion, un agent appris doit découvrir une stratégie à très long délai (hibernation de ~200 pas) et
+le test anti-triche de l'étape 2 (stratégies codées à la main) ne pouvait pas le voir. **Décision en attente de l'utilisateur** (voir PROGRESS.md).
