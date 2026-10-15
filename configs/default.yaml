@@ -1,0 +1,5 @@
+# Configuration globale par défaut. Les sections du monde, de l'env et des agents
+# seront ajoutées aux étapes suivantes.
+seed: 0
+device: auto      # auto | cuda | mps | cpu  (ANTWORLD_DEVICE l'emporte si défini)
+runs_dir: runs
