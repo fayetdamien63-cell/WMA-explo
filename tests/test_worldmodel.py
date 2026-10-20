@@ -315,3 +315,27 @@ def test_gate_verdict_and_dream_figure(tmp_path, ds):
     assert (tmp_path / "dream.png").stat().st_size > 2000
     E.plot_curves({"résiduel": {"eval_seen": M.evaluate_model(m, ds, n_boot=5), "eval_unseen": M.evaluate_model(m, ds, n_boot=5)}}, tmp_path / "c.png")
     assert (tmp_path / "c.png").stat().st_size > 2000
+
+
+# ------------------------------------------------------------------ plafond de prédictibilité
+def test_replay_reproduces_recorded_episodes_exactly(ds):
+    """Le plafond repose sur le déterminisme : rejouer (seed de monde + actions) redonne la carte enregistrée."""
+    from eval.wm_ceiling import replay_to
+    from antworld.env import AntWorldEnv
+    env = AntWorldEnv(CFG)
+    for e, s in ((0, 1), (1, 40), (2, 150), (3, 399)):
+        replay_to(env, ds, e, min(s, int(ds.lengths[e])))          # lève si la carte rejouée diffère de l'enregistrée
+
+
+def test_ceiling_is_between_persistence_and_perfect_and_reproducible(ds):
+    from eval.wm_ceiling import bayes_stats, ceiling_summary
+    stats = M.window_stats(_Replay("persist"), ds, horizons=(1, 5), starts=(60,), batch=10)
+    a = bayes_stats(CFG, ds, stats, n_branches=6, seed=1, starts=(60,))
+    b = bayes_stats(CFG, ds, stats, n_branches=6, seed=1, starts=(60,))
+    assert all(np.array_equal(a[k], b[k]) for k in a), "même seed => mêmes futurs"
+    c = bayes_stats(CFG, ds, stats, n_branches=6, seed=2, starts=(60,))
+    assert not np.array_equal(a["sse_map_bayes"], c["sse_map_bayes"])
+    summ = ceiling_summary(stats, a)
+    for h in ("1", "5"):
+        assert 0.0 < summ[h]["map_skill_macro"] < 1.0, "le plafond bat « rien ne change » sans être parfait (le simulateur est aléatoire)"
+        assert all(x <= 1.0 + 1e-9 for x in summ[h]["map_skill_by_channel"]), "une compétence ne dépasse jamais 1"
