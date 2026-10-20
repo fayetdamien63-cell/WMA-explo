@@ -101,8 +101,9 @@ def main() -> None:
     ap.add_argument("--data", type=Path, default=ROOT / "runs" / "step5" / "data")
     ap.add_argument("--compare", type=Path, nargs="*", default=[], help="autres dossiers de modèles à tracer sur les mêmes courbes")
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--threads", type=int, default=4)
     args = ap.parse_args()
-    torch.set_num_threads(4)
+    torch.set_num_threads(args.threads)
     out = args.out or args.model / "eval"
     out.mkdir(parents=True, exist_ok=True)
     sets = {s: TrajectoryDataset(load_split(args.data / f"{s}.npz")) for s in ("eval_seen", "eval_unseen")}
