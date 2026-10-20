@@ -8,7 +8,7 @@
 | 3 — Agents de référence et banc d'évaluation | ✅ validée avec la récompense v2 (commit `b8541d6`) |
 | 4 — Baseline PPO | ✅ validée (commit `a424de4`) |
 | 5 — World model supervisé | ✅ acceptée par l'utilisateur (option B puis C) : porte révisée atteinte à 5, 10, 25 et 50 pas ; **1 pas manqué (34 % du plafond pour 40 %)**, non bloquant |
-| 6 — Planification dans le modèle | ⏳ en cours |
+| 6 — Planification dans le modèle | ✅ résultats prêts, en attente de feu vert |
 | 7 à 9 | — |
 
 ## Étape 0 — résultats de la porte
@@ -213,3 +213,54 @@ python scripts/bayes_ceiling.py --model runs/step5/wm_residual_big --data runs/s
 Résultat (`runs/step5/wm_residual/gate_revised.json`) : part du plafond **34 % (1 pas) ❌, 41 % (5), 47 % (10), 53 % (25), 55 % (50) ✅** ; les quatre critères à 10 pas (compétence carte, compétence état, R² de la récompense, écart vus/jamais vus) restent ✅.
 La porte reste donc formellement **non atteinte à 1 pas** ; l'utilisateur a décidé d'avancer malgré cela. **C** : étape 6 avec un horizon de planification ≤ 25 pas (R² de la récompense cumulée 0,54 à 25 pas, 0,35 à 50 pas).
 Le plafond est mis en cache avec les données (`runs/step5/data/ceiling_eval_unseen.json`, indépendant du modèle) et sert à tout modèle futur.
+
+
+## Étape 6 — Planification CEM/MPC dans le modèle appris (résultats)
+
+Mêmes mondes de TEST pour tout (8 mondes, seeds 1 000 000…, planificateur sans accès privilégié ; retour moyen d'épisode, IC 95 % bootstrap sur les mondes).
+Références sur ces 8 mondes : aléatoire 75,9 · heuristique 106,3 · oracle (simulateur vrai, horizon complet) 133,3. Score normalisé = (retour − aléatoire)/(oracle − aléatoire).
+
+### Test 1 — le planificateur est-il bon ? (même code, vrai simulateur à la place du modèle)
+| Planificateur (simulateur vrai) | Retour | Normalisé | Temps/épisode |
+|---|---|---|---|
+| H25, 32 séq./plan | 109,6 [102,3 ; 115,6] | 0,59 | 8 s |
+| H25, 192 séq./plan | 113,3 [108,6 ; 117,4] | 0,65 | 44 s |
+| H50, 96 séq./plan | 120,3 [115,6 ; 125,0] | 0,77 | 40 s |
+| H100, 96 séq./plan | 127,8 [124,2 ; 131,4] | 0,90 | 78 s |
+Le score monte régulièrement avec l'horizon et tend vers l'oracle (horizon complet) : **l'écart de l'horizon 25 à l'oracle est dû à l'horizon, pas au planificateur** (testé, pas supposé). Le planificateur est donc validé ; il bat l'heuristique dès H25 (+7,0 [+2,4 ; +11,7] à 192 séq.).
+
+### Test 2 — score contre budget dans le modèle appris (horizon 25 sauf mention)
+| Séquences/plan | Retour | Normalisé | Temps/épisode (CPU) | Pas imaginés/épisode |
+|---|---|---|---|---|
+| 16 | 83,5 [77,7 ; 88,0] | 0,13 | 29 s | 31 k |
+| 32 | 97,4 [90,1 ; 103,9] | 0,37 | 51 s | 62 k |
+| 96 | 99,7 [95,7 ; 104,1] | 0,41 | 113 s | 187 k |
+| 192 | 96,2 [90,2 ; 102,3] | 0,35 | 243 s | 374 k |
+| 384 | 98,6 [94,3 ; 103,1] | 0,40 | 490 s | 749 k |
+| 96, H10 | 98,4 [93,4 ; 103,8] | 0,39 | 48 s | 76 k |
+| 96, H15 | 98,8 [94,1 ; 103,6] | 0,40 | 69 s | 114 k |
+Le score bat l'aléatoire (+20 à +24) mais **reste sous l'heuristique** (−6,7 [−12,2 ; −1,3] à 96 séq. ; −7,8 à 384) et **plafonne vers 96-100 dès ~32 séquences** : multiplier le budget par 12 n'apporte rien (les IC se recouvrent entièrement). Raccourcir l'horizon (10, 15) n'aide pas non plus. Le même planificateur avec le vrai simulateur à H25 atteint 109,6-113,3 : **l'écart de ~12 à 15 points vient de l'erreur du modèle**.
+Figure : `docs/img/step6_budget_curve.png` (score vs budget, vs temps réel, exploitation).
+
+### Test 3 — le planificateur exploite-t-il les erreurs du modèle ? **Oui.**
+Récompense cumulée sur 25 pas, prédit − réel (le plan choisi est rejoué dans le vrai simulateur depuis l'état réel ; contrôle : 8 séquences aléatoires) :
+| Séq./plan | 16 | 32 | 96 | 192 | 384 |
+|---|---|---|---|---|---|
+| plan CHOISI | +0,65 | +1,33 | +2,63 | +3,39 | +3,38 |
+| séquences ALÉATOIRES | +0,18 | +0,91 | +1,32 | +1,09 | +0,89 |
+| corrélation prédit/réel (plans choisis) | 0,80 | 0,66 | 0,34 | 0,58 | 0,38 |
+Le modèle est optimiste sur les plans choisis, et d'autant plus que la recherche est poussée (malédiction de l'optimiseur) ; les séquences aléatoires, non optimisées contre lui, le sont bien moins. Le biais reste de l'ordre de 3 unités de retour sur 25 pas, contre ~1 pour le hasard. Le classement des plans devient moins fiable (corrélation en baisse), ce qui explique le plafond.
+
+### Limites
+8 mondes seulement (IC larges : ±5) ; planificateur myope (H ≤ 25, pas de valeur terminale) ; une seule graine de planification par monde ; le modèle est celui de l'étape 5 (porte formellement non atteinte à 1 pas, voir ci-dessus) ; imagination sur CPU ~2 700 pas/s, plus lente que le vrai simulateur.
+
+### Pistes (pas encore faites)
+Pénaliser l'incertitude (ensemble de modèles), ré-entraîner le modèle sur les données collectées par le planificateur (c'est la boucle de l'étape 7), valeur terminale apprise (étape 7). Les trois attaquent la cause mesurée (modèle exploité et horizon court).
+
+### Commandes
+```
+python scripts/run_planner.py --mode sim   --horizon 25 --samples 64 --iters 3 --n-worlds 20 --workers 4 --threads 1 --tag sim_h25_64x3
+python scripts/run_planner.py --mode model --horizon 25 --samples 32 --iters 3 --n-worlds 20 --workers 4 --threads 1 --tag model_32x3
+python scripts/plot_planner.py runs/step6
+```
+(`--device cuda` pour l'imagination sur GPU.)

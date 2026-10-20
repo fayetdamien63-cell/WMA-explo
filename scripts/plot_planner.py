@@ -25,16 +25,21 @@ def main() -> None:
     args = ap.parse_args()
     sums = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(args.runs.glob("*/summary.json"))]
     fig, axes = plt.subplots(1, 3, figsize=(17, 4.8))
-    colors = {"model": "#d62728", "sim": "#1f77b4"}
-    for mode, label in (("sim", "planificateur, vrai simulateur (H25)"), ("model", "planificateur, modèle appris (H25)")):
-        rows = sorted((s for s in sums if s["mode"] == mode), key=lambda s: s["sequences_per_plan"])
-        if not rows:
-            continue
+    palette = {("sim", 25): "#1f77b4", ("sim", 50): "#6baed6", ("sim", 100): "#08306b", ("model", 25): "#d62728", ("model", 15): "#fb6a4a", ("model", 10): "#fcae91"}
+    names = {"sim": "vrai simulateur", "model": "modèle appris"}
+    # une courbe par (mode, horizon) : mélanger des horizons dans une même ligne serait trompeur
+    groups = sorted({(s["mode"], s["config"]["horizon"]) for s in sums})
+    for mode, hz in groups:
+        rows = sorted((s for s in sums if s["mode"] == mode and s["config"]["horizon"] == hz), key=lambda s: s["sequences_per_plan"])
+        label = f"planificateur, {names[mode]} (H{hz})"
+        color = palette.get((mode, hz), "k")
         x = [s["sequences_per_plan"] for s in rows]
         y = [s["return_mean"] for s in rows]
         lo = [s["return_ci"][0] for s in rows]; hi = [s["return_ci"][1] for s in rows]
-        axes[0].plot(x, y, "o-", color=colors[mode], label=label); axes[0].fill_between(x, lo, hi, color=colors[mode], alpha=0.15)
-        axes[1].plot([s["wall_s_per_episode"] for s in rows], y, "o-", color=colors[mode], label=label)
+        axes[0].plot(x, y, "o-", color=color, label=label)
+        if len(rows) > 1:
+            axes[0].fill_between(x, lo, hi, color=color, alpha=0.12)
+        axes[1].plot([s["wall_s_per_episode"] for s in rows], y, "o-", color=color, label=label)
     refs = {}
     for s in sums:
         for n, v in s.get("refs", {}).items():
@@ -44,9 +49,9 @@ def main() -> None:
             if n in refs:
                 ax.axhline(refs[n], ls="--", color=c, alpha=0.8, label=f"{n} (mêmes mondes)")
         ax.grid(alpha=0.3); ax.set_ylabel("retour d'épisode")
-    axes[0].set_xscale("log"); axes[0].set_xlabel("séquences simulées par plan (échantillons × itérations)"); axes[0].set_title("Score selon le budget"); axes[0].legend(fontsize=8)
+    axes[0].set_xscale("log"); axes[0].set_xlabel("séquences simulées par plan (échantillons × itérations)"); axes[0].set_title("Score selon le budget"); axes[0].legend(fontsize=7, loc="lower right")
     axes[1].set_xscale("log"); axes[1].set_xlabel("temps de calcul par épisode (s, CPU)"); axes[1].set_title("Score selon le temps réel")
-    rows = sorted((s for s in sums if s["mode"] == "model" and "prediction_vs_reality" in s and "25" in s["prediction_vs_reality"]), key=lambda s: s["sequences_per_plan"])
+    rows = sorted((s for s in sums if s["mode"] == "model" and s["config"]["horizon"] == 25 and "prediction_vs_reality" in s and "25" in s["prediction_vs_reality"]), key=lambda s: s["sequences_per_plan"])
     if rows:
         x = np.arange(len(rows)); w = 0.38
         axes[2].bar(x - w / 2, [s["prediction_vs_reality"]["25"]["gap_chosen"] for s in rows], w, color="#d62728", label="plan choisi")
