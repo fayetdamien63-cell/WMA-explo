@@ -1,0 +1,45 @@
+# Dreamer-lite (étape 7) : modèle du monde appris EN LIGNE + acteur-critique entraîné dans l'imagination.
+total_steps: 200000       # pas d'environnement d'entraînement, échauffement compris (PPO : ~282 k pour égaler l'heuristique)
+warmup_steps: 4000        # épisodes aléatoires avant d'apprendre
+buffer_episodes: 300      # tampon circulaire (≈ 1 Go)
+train_pool_size: 1000     # mondes d'entraînement : seeds 0..999 (comme PPO)
+eval_every: 10000
+eval_worlds: 10           # mondes de validation de la courbe (comme PPO)
+gap_every: 40             # mesure « rêve contre réalité » toutes les 40 décisions pendant l'évaluation
+gap_sequences: 8
+wm:
+  hidden: 256
+  embed: 192
+  action_embed: 64
+  enc_channels: [16, 32, 32]
+  head_channels: 16
+  residual: true
+wm_batch: 16
+wm_updates_per_1k: 10
+wm_pretrain_updates: 300
+wm_phase_updates: [100, 100, 1000000]   # 1 pas observé -> boucle ouverte 8 -> boucle ouverte 16
+wm_phase_context: [16, 8, 8]
+wm_phase_horizon: [0, 8, 16]
+wm_phase_lr: [0.001, 0.0005, 0.0003]
+wm_grad_clip: 1.0
+wm_loss_weights: [1.0, 1.0, 1.0, 0.1]
+wm_weight_floor: 5.0e-6
+refit_norm_every: 25000
+ac:
+  hidden: 256
+  horizon: 15
+  gamma: 0.99
+  lam: 0.95
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  ent_coef: 0.01
+  adv_floor: 0.1
+  value_scale: 10.0
+  target_tau: 0.02
+  grad_clip: 1.0
+  unimix: 0.01
+ac_updates_per_1k: 25
+ac_batch: 64
+ac_context: 8
+device: auto
+torch_threads: 1
