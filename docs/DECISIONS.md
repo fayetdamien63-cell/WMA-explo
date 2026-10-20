@@ -201,3 +201,29 @@ de creux (population minimale 93 % de la moyenne), plus d'explosion finale (13-1
   **la politique stochastique est déjà à ~105 à 200 k pas** (seed 0 : 105,4 contre 58,7 en déterministe au même point). L'argmax par dimension d'une politique multi-discrète à entropie élevée peut tomber sur une combinaison d'actions sans rapport avec la politique apprise.
 - **Référence d'efficacité en échantillons (monde complet, 5 seeds, politique stochastique, mondes de validation)** : 90 % du niveau de l'heuristique (98,5) en **78 k pas** (médiane ; 68-81 k) ; 100 % (109,5) en **282 k pas** (192-374 k ; ≈ 865 s d'entraînement CPU) ;
   plateau lent ensuite (~115 en validation, 110,9 en test à 2 M pas). Politique déterministe : 691 k / 1,18 M pas. C'est la référence à battre pour le world model (étapes 7-8).
+
+## Étape 5
+
+- **Données** (`models/data.py`, `agents/data_policies.py`) : 6 sources de trajectoires, mélange 25 % aléatoire / 15 % aléatoire par blocs (une action tenue 5-20 pas, comme la structure des plans CEM) /
+  15 % heuristique / 15 % heuristique bruitée (ε = 0,25 par dimension) / 20 % PPO stochastique (une des 5 seeds par épisode) / 10 % politiques dégénérées (actions constantes qui font stagner ou mourir la colonie).
+  Raison : un world model ne sait que ce qu'il a vu ; les planificateurs (étape 6) iront explorer des actions atypiques, et la mort d'une colonie doit apparaître dans les données (11 % des épisodes d'entraînement).
+  Cartes stockées en uint8 (erreur ≤ 0,002, identique pour le modèle et la baseline) : 640 épisodes = 56 Mo compressés.
+  Quatre jeux, plages de seeds disjointes : `train` (mondes 0..999), `val`, `eval_seen` (MÊMES mondes que train, nouvelles trajectoires), `eval_unseen` (mondes de test, jamais vus).
+- **Architecture** (`models/worldmodel.py`, ~0,8 M de paramètres) : encodeur CNN+MLP → GRU latent (256) → décodeurs de carte, d'état, de récompense et de fin d'épisode. Deux modes de pas : *observer*
+  (la vraie observation est injectée après la prédiction : entraînement à 1 pas) et *boucle ouverte* (aucune observation : seul ce que verra un planificateur). Une prédiction est toujours faite AVANT d'observer sa cible
+  (testé : pas de fuite de l'avenir, cohérence observer/imaginer).
+- **Deux variantes comparées honnêtement** : `latent seul` (spécification minimale de l'énoncé : carte décodée du seul vecteur de 256 valeurs) et `résiduel` (le décodeur prédit un résidu par rapport à la carte de base,
+  = dernière observation ou, en imagination, dernière prédiction du modèle). Hypothèse testée : un vecteur de 256 valeurs ne peut pas mémoriser une carte 8×32×32 exacte, donc ne peut pas battre « rien ne change » sur les parties statiques.
+  La variante résiduelle démarre EXACTEMENT à « rien ne change » (testé), donc le cadre de comparaison est honnête.
+- **Pertes normalisées** : w = 1/(variance de changement à 1 pas + ε) par canal/dimension : une prédiction « rien ne change » coûte ≈ 1 par canal dynamique, tous les canaux comptent pareil, et le terme de récompense
+  (normalisé par son écart-type) est du même ordre. Entraînement en 3 phases : 1 pas observé (16 pas), puis imagination de 8 pas, puis de 24 pas ; 1 500 itérations chacune (lot 16).
+- **Métriques** (`eval/wm_metrics.py`) : en BOUCLE OUVERTE depuis 5 instants de départ par épisode (10 pas de contexte observés), horizons 1, 5, 10, 25, 50 ; compétence = 1 − erreur modèle / erreur « rien ne change » (macro par canal dynamique
+  et globale) ; récompense CUMULÉE sur k pas (R², contre persistance et moyenne) ; IC 95 % par bootstrap d'ÉPISODES. Vérifié sur de faux modèles : persistance → compétence exactement 0, modèle parfait → 1.
+- **Critères de la porte fixés AVANT les résultats** (mondes jamais vus, 10 pas) : compétence carte ≥ 0,25, compétence état ≥ 0,25, R² de la récompense cumulée ≥ 0,5, compétence carte à 1 pas ≥ 0,5, écart « mondes vus − jamais vus » ≤ 0,10.
+
+### Trois défauts trouvés et corrigés pendant l'étape (aucun n'a atteint un résultat rapporté)
+1. **Pondération des pertes** : les poids normalisés à moyenne 1 rendaient les termes de carte (0,001) et d'état (0,002) ~700 fois plus petits que celui de la récompense (0,7) ; le modèle n'apprenait presque que la récompense.
+   Vu dans le journal d'un entraînement que j'ai interrompu à 1 000 itérations. Poids corrigés (sans renormalisation).
+2. **Résidu en espace logit** `σ(logit(base)+δ)` : pour une case valant exactement 0 ou 1, le gradient est atténué d'un facteur ~10³ ; les canaux binaires (visible, connu, roche) restaient *exactement* à « rien ne change », même en sur-apprentissage
+   d'un petit lot. Remplacé par un résidu additif borné « straight-through ». Test de régression ajouté. (Découvert grâce au test de sur-apprentissage, qui échouait.)
+3. **Rétropropagation à travers les cartes prédites réinjectées** : instable (perte 302 et divergence avec un pas de 1e-3 sur un petit lot). `detach_base=True` par défaut : seul l'état latent est rétropropagé dans le temps.

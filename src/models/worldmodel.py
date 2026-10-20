@@ -13,7 +13,7 @@ Deux variantes (cfg.residual) :
                    minimale de l'énoncé. Limite attendue : un vecteur de 256 valeurs ne peut pas mémoriser une carte 8×32×32 exacte,
                    donc il ne peut pas battre « rien ne change » sur les parties statiques (roche, nid, nourriture déjà vue).
   residual=True  : le décodeur prédit un RÉSIDU par rapport à une carte de base (la dernière observation, ou, en boucle ouverte, sa propre
-                   dernière prédiction) : p = sigmoid(logit(base) + δ(h', base)). Delta nul = « rien ne change » : le modèle n'a à apprendre
+                   dernière prédiction) : p = borne[0,1](base + δ(h', base)). Delta nul = « rien ne change » : le modèle n'a à apprendre
                    que ce qui change. La carte de base fait partie de l'état du modèle ; h' garde le contexte (rôles, charges, caps...).
 """
 
@@ -24,8 +24,6 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 from torch import nn
-
-EPS = 1e-3
 
 
 @dataclass
@@ -40,11 +38,6 @@ class WMConfig:
     map_size: int = 32
     state_dim: int = 24
     n_action_dims: tuple[int, ...] = (4, 4, 4, 3, 5)
-
-
-def _logit(p: torch.Tensor) -> torch.Tensor:
-    p = p.clamp(EPS, 1 - EPS)
-    return torch.log(p) - torch.log1p(-p)
 
 
 class ObsEncoder(nn.Module):
@@ -67,7 +60,7 @@ class ObsEncoder(nn.Module):
 
 
 class ResidualMapHead(nn.Module):
-    """Convolutions (dilatées : champ de vision 15×15) modulées par h' (FiLM) -> résidu en logit, par canal et par case.
+    """Convolutions (dilatées : champ de vision 15×15) modulées par h' (FiLM) -> résidu additif, par canal et par case.
 
     La couche de sortie est initialisée à zéro : au départ le modèle prédit exactement « rien ne change ».
     """
@@ -143,11 +136,17 @@ class WorldModel(nn.Module):
 
     # ------------------------------------------------------------------ outils
     def set_norm(self, map_var, state_var, reward_mean: float, reward_std: float) -> None:
-        """Poids de perte ∝ 1 / (variance de changement à 1 pas) : chaque canal compte selon sa dynamique, pas sa rareté."""
+        """Poids de perte w = 1 / (variance de changement à 1 pas + ε).
+
+        Pour un canal dynamique, w · MSE ≈ MSE / MSE_{« rien ne change »} = 1 − compétence : une prédiction qui ne change rien vaut ≈ 1,
+        une prédiction parfaite 0, et tous les canaux dynamiques pèsent pareil, quelle que soit leur rareté. Le terme de récompense
+        (normalisé par son écart-type) vaut 1 pour un prédicteur constant : les trois termes sont ainsi comparables. On ne renormalise PAS
+        les poids (une moyenne à 1 écraserait carte et état d'un facteur ~1000 devant la récompense : défaut corrigé pendant l'étape 5).
+        ε = 5 % de la variance moyenne évite qu'un canal quasi immobile (nid : variance 0) reçoive un poids infini.
+        """
         def weights(var):
             var = torch.as_tensor(var, dtype=torch.float32)
-            w = 1.0 / (var + 0.05 * var.mean())
-            return w / w.mean()
+            return 1.0 / (var + 0.05 * var.mean())
         self.map_w.copy_(weights(map_var))
         self.state_w.copy_(weights(state_var))
         self.reward_mean.fill_(float(reward_mean))
@@ -168,10 +167,12 @@ class WorldModel(nn.Module):
         h, base_map, base_state = belief["h"], belief["map"], belief["state"]
         h1 = self.dyn_cell(torch.cat([self.act_embed(self.onehot(actions)), base_state], dim=1), h)
         if self.cfg.residual:
-            # p = base + σ(logit(base) + δ) − σ(logit(base)) : vaut EXACTEMENT la base quand δ = 0 (« rien ne change »), et reste
-            # dans [0, 1] à ε près (on borne ensuite). Une formule σ(logit(clamp(base)) + δ) serait fausse de ε sur les cases à 0 ou 1.
-            logit_base = _logit(base_map)
-            map_prob = (base_map + torch.sigmoid(logit_base + self.map_head(h1, base_map)) - torch.sigmoid(logit_base)).clamp(0.0, 1.0)
+            # p = base + δ, borné à [0, 1] par un « straight-through » : en sortie la valeur est bornée, mais le gradient passe toujours.
+            # δ = 0 donne EXACTEMENT « rien ne change ». (Défaut corrigé pendant l'étape 5 : une version σ(logit(base) + δ) atténuait le
+            # gradient d'un facteur ~1000 sur les cases valant exactement 0 ou 1, et les canaux binaires — visible, connu, roche — ne
+            # pouvaient apprendre aucun changement, même en sur-apprentissage.)
+            raw = base_map + self.map_head(h1, base_map)
+            map_prob = raw + (raw.clamp(0.0, 1.0) - raw).detach()
             state = base_state + self.state_head(h1)
             r_in = torch.cat([h1, state, base_state, state - base_state], dim=1)
             d_in = torch.cat([h1, state], dim=1)
@@ -185,7 +186,7 @@ class WorldModel(nn.Module):
 
     # ------------------------------------------------------------------ séquences
     def rollout(self, maps: torch.Tensor, states: torch.Tensor, actions: torch.Tensor, n_forced: int,
-                detach_base: bool = False) -> dict[str, torch.Tensor]:
+                detach_base: bool = True) -> dict[str, torch.Tensor]:
         """Fait avancer le modèle sur une fenêtre de L pas.
 
         maps (B, L+1, C, H, W), states (B, L+1, S), actions (B, L, 5) : fenêtre RÉELLE.
@@ -193,6 +194,11 @@ class WorldModel(nn.Module):
         Les pas suivants sont en BOUCLE OUVERTE : le modèle n'utilise plus aucune observation après o_{n_forced} ; la prédiction
         du pas t ≥ n_forced est une prédiction à k = t − n_forced + 1 pas.
         Renvoie des tenseurs (B, L, ...) : pred_maps (prédiction de o_{t+1}), pred_states, rewards, done_logits.
+
+        detach_base=True (défaut) : en boucle ouverte, la carte/l'état prédits réinjectés comme base du pas suivant sont COUPÉS du graphe
+        de calcul (l'état latent h, lui, est rétropropagé dans le temps). Mesuré pendant l'étape 5 : en rétropropageant aussi à travers
+        la chaîne de cartes prédites, l'entraînement est instable (perte 302 et divergence avec un pas de 1e-3) ; avec la coupure, le
+        modèle sur-apprend proprement un petit lot en imagination.
         """
         B, L = actions.shape[:2]
         belief = self.init_belief(maps[:, 0], states[:, 0])
@@ -210,7 +216,7 @@ class WorldModel(nn.Module):
         return {k: torch.stack(v, dim=1) for k, v in outs.items()}
 
     def loss(self, batch: dict[str, torch.Tensor], n_forced: int, weights=(1.0, 1.0, 1.0, 0.1),
-             detach_base: bool = False) -> tuple[torch.Tensor, dict[str, float]]:
+             detach_base: bool = True) -> tuple[torch.Tensor, dict[str, float]]:
         """Perte normalisée sur une fenêtre : carte, état, récompense, fin ; séparée entre pas observés et boucle ouverte."""
         maps, states, actions = batch["maps"], batch["states"], batch["actions"]
         rewards, dones = batch["rewards"], batch["dones"].float()

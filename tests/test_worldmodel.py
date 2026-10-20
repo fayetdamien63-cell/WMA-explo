@@ -127,6 +127,26 @@ def test_can_overfit_a_small_batch(ds, residual, max_ratio):
     assert info["loss_open"] < 0.6 * first
 
 
+def test_residual_head_can_flip_binary_channels(ds):
+    """Régression : les canaux BINAIRES (valeurs exactement 0/1 : visible, connu, roche) doivent pouvoir changer. Avec une
+    paramétrisation σ(logit(base)+δ) leur gradient était atténué d'un facteur ~1000 et le modèle restait à « rien ne change »."""
+    torch.manual_seed(0)
+    m = WorldModel(WMConfig(residual=True, **TINY))
+    fit_norm(m, ds)
+    b = batch_of(ds, B=4, L=8, seed=1)
+    opt = torch.optim.Adam(m.parameters(), 3e-3)
+    for _ in range(400):
+        loss, _ = m.loss(b, n_forced=8)
+        opt.zero_grad(); loss.backward(); torch.nn.utils.clip_grad_norm_(m.parameters(), 1.0); opt.step()
+    with torch.no_grad():
+        out = m.rollout(b["maps"], b["states"], b["actions"], n_forced=8)["map"]
+    err = ((out - b["maps"][:, 1:]) ** 2).mean(dim=(0, 1, 3, 4))
+    persist = ((b["maps"][:, :-1] - b["maps"][:, 1:]) ** 2).mean(dim=(0, 1, 3, 4))
+    for c, name in ((0, "visible"), (1, "known")):
+        assert persist[c] > 1e-6
+        assert err[c] < 0.6 * persist[c], f"canal binaire « {name} » bloqué à la persistance : {float(err[c] / persist[c]):.2f}"
+
+
 def test_gradients_flow_through_open_loop_to_every_module(ds):
     m = WorldModel(WMConfig(residual=True, **TINY))
     fit_norm(m, ds)
@@ -139,18 +159,23 @@ def test_gradients_flow_through_open_loop_to_every_module(ds):
     assert m.encoder.map_fc[0].weight.grad.abs().sum() > 0 and m.dyn_cell.weight_hh.grad.abs().sum() > 0
 
 
-def test_loss_normalisation_balances_dynamic_channels(ds):
-    """Poids ∝ 1/(variance de changement) : le produit poids × variance (importance réelle du canal dans la perte) est
-    quasi égal entre canaux dynamiques, et ~0 pour un canal immobile (le nid)."""
+def test_loss_normalisation_makes_persistence_cost_about_one_per_dynamic_channel(ds):
+    """w = 1/(variance de changement + ε) : une prédiction « rien ne change » coûte ≈ 1 par canal dynamique (et 0 pour le nid immobile),
+    donc carte, état et récompense (normalisée par son écart-type) ont des termes de perte du même ordre de grandeur."""
     m = WorldModel(WMConfig(**TINY))
     fit_norm(m, ds)
-    var = torch.as_tensor(ds.persistence_stats()["map_var"], dtype=torch.float32)
-    assert (m.map_w > 0).all() and m.map_w.mean().item() == pytest.approx(1.0, rel=1e-4)
-    importance = m.map_w * var
-    assert importance[5] < 1e-6, "le nid est immobile"
+    st = ds.persistence_stats()
+    var = torch.as_tensor(st["map_var"], dtype=torch.float32)
+    assert (m.map_w > 0).all() and m.reward_std > 0
+    importance = m.map_w * var                       # coût de la persistance par canal
+    assert importance[5] < 1e-6, "le nid est immobile : coût nul"
     top = importance[var.argsort(descending=True)[:3]]
-    assert top.max() / top.min() < 2.0, f"les canaux les plus dynamiques doivent peser à peu près pareil : {top.tolist()}"
-    assert m.reward_std > 0
+    assert (top > 0.5).all() and (top <= 1.0 + 1e-6).all(), f"coût de la persistance sur les canaux dynamiques : {top.tolist()}"
+    # Même ordre de grandeur que le terme de récompense, mesuré sur un lot : la persistance coûte ~1 sur la carte comme sur l'état.
+    b = batch_of(ds, B=8, L=6, seed=3)
+    persist_map = (((b["maps"][:, 1:] - b["maps"][:, :-1]) ** 2).mean(dim=(3, 4)) * m.map_w).mean()
+    persist_state = (((b["states"][:, 1:] - b["states"][:, :-1]) ** 2) * m.state_w).mean()
+    assert 0.1 < float(persist_map) < 3.0 and 0.1 < float(persist_state) < 3.0, (float(persist_map), float(persist_state))
 
 
 def test_checkpoint_roundtrip(tmp_path, model, ds):

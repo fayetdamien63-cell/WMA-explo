@@ -30,7 +30,7 @@ class WMTrainConfig:
     phase_lr: tuple[float, ...] = (1e-3, 5e-4, 3e-4)
     grad_clip: float = 1.0
     loss_weights: tuple[float, ...] = (1.0, 1.0, 1.0, 0.1)  # carte, état, récompense, fin d'épisode
-    detach_base: bool = False
+    detach_base: bool = True                                # coupe le gradient à travers les cartes prédites réinjectées (stabilité)
     val_every: int = 250
     val_batches: int = 4
     log_every: int = 50
