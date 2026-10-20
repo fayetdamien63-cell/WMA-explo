@@ -163,10 +163,14 @@ class WorldModel(nn.Module):
         h = self.obs_cell(self.encoder(maps0, states0), maps0.new_zeros(maps0.shape[0], self.cfg.hidden))
         return {"h": h, "map": maps0, "state": states0}
 
+    def _dynamics(self, belief: dict[str, torch.Tensor], actions: torch.Tensor) -> torch.Tensor:
+        """h' = GRU_dyn(h, [action, état de base]) : l'avancée de l'état latent, sans décodage."""
+        return self.dyn_cell(torch.cat([self.act_embed(self.onehot(actions)), belief["state"]], dim=1), belief["h"])
+
     def predict(self, belief: dict[str, torch.Tensor], actions: torch.Tensor) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
         """Prédit (o_{t+1}, r_t, fin_t) depuis la croyance et l'action a_t. Renvoie (prédictions, h')."""
-        h, base_map, base_state = belief["h"], belief["map"], belief["state"]
-        h1 = self.dyn_cell(torch.cat([self.act_embed(self.onehot(actions)), base_state], dim=1), h)
+        base_map, base_state = belief["map"], belief["state"]
+        h1 = self._dynamics(belief, actions)
         if self.cfg.residual:
             # p = base + δ, borné à [0, 1] par un « straight-through » : en sortie la valeur est bornée, mais le gradient passe toujours.
             # δ = 0 donne EXACTEMENT « rien ne change ». (Défaut corrigé pendant l'étape 5 : une version σ(logit(base) + δ) atténuait le
@@ -184,6 +188,29 @@ class WorldModel(nn.Module):
         reward = self.reward_head(r_in).squeeze(1) * self.reward_std + self.reward_mean
         return {"map": map_prob, "state": state, "reward": reward,
                 "done_logit": self.done_head(d_in).squeeze(1)}, h1
+
+    # ------------------------------------------------------------------ utilisation pour décider (planification, étape 6)
+    def advance(self, belief: dict[str, torch.Tensor], action: torch.Tensor, map_obs: torch.Tensor,
+                state_obs: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Croyance après avoir EXÉCUTÉ `action` puis OBSERVÉ la vraie observation suivante : exactement un pas « observé » de `rollout`
+        (sans décoder de prédiction, inutile ici)."""
+        h1 = self._dynamics(belief, action)
+        return {"h": self.obs_cell(self.encoder(map_obs, state_obs), h1), "map": map_obs, "state": state_obs}
+
+    @torch.no_grad()
+    def imagine(self, belief: dict[str, torch.Tensor], actions: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Imagination en BOUCLE OUVERTE depuis une croyance : `belief` (lot B), `actions` (B, H, 5) -> prédictions (B, H, ...).
+
+        C'est ce qu'utilise un planificateur : il part de la croyance courante (construite avec les vraies observations) et évalue
+        B séquences d'actions candidates en parallèle. Identique à la partie boucle ouverte de `rollout` (testé).
+        """
+        outs = {"map": [], "state": [], "reward": [], "done_logit": []}
+        for t in range(actions.shape[1]):
+            pred, h1 = self.predict(belief, actions[:, t])
+            for k in outs:
+                outs[k].append(pred[k])
+            belief = {"h": h1, "map": pred["map"], "state": pred["state"]}
+        return {k: torch.stack(v, dim=1) for k, v in outs.items()}
 
     # ------------------------------------------------------------------ séquences
     def rollout(self, maps: torch.Tensor, states: torch.Tensor, actions: torch.Tensor, n_forced: int,
