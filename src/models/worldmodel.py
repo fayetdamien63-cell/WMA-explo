@@ -135,8 +135,8 @@ class WorldModel(nn.Module):
         self.register_buffer("reward_std", torch.ones(()))
 
     # ------------------------------------------------------------------ outils
-    def set_norm(self, map_var, state_var, reward_mean: float, reward_std: float) -> None:
-        """Poids de perte w = 1 / (variance de changement à 1 pas + ε), avec un plancher ε ABSOLU très petit (5·10⁻⁶).
+    def set_norm(self, map_var, state_var, reward_mean: float, reward_std: float, floor: float = 5e-6) -> None:
+        """Poids de perte w = 1 / (variance de changement à 1 pas + ε), avec un plancher ε ABSOLU très petit (`floor`, 5·10⁻⁶ par défaut).
 
         Pour un canal dynamique, w · MSE ≈ MSE / MSE_{« rien ne change »} = 1 − compétence : une prédiction qui ne change rien vaut ≈ 1,
         une prédiction parfaite 0, et tous les canaux dynamiques pèsent pareil, quelle que soit leur rareté. Le terme de récompense
@@ -147,7 +147,7 @@ class WorldModel(nn.Module):
         absolu évite seulement qu'un canal immobile (nid : variance 0) reçoive un poids infini.
         """
         def weights(var):
-            return 1.0 / (torch.as_tensor(var, dtype=torch.float32) + 5e-6)
+            return 1.0 / (torch.as_tensor(var, dtype=torch.float32) + floor)
         self.map_w.copy_(weights(map_var))
         self.state_w.copy_(weights(state_var))
         self.reward_mean.fill_(float(reward_mean))

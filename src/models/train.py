@@ -30,6 +30,7 @@ class WMTrainConfig:
     phase_lr: tuple[float, ...] = (1e-3, 5e-4, 3e-4)
     grad_clip: float = 1.0
     loss_weights: tuple[float, ...] = (1.0, 1.0, 1.0, 0.1)  # carte, état, récompense, fin d'épisode
+    weight_floor: float = 5e-6                              # plancher des poids de perte (voir WorldModel.set_norm)
     detach_base: bool = True                                # coupe le gradient à travers les cartes prédites réinjectées (stabilité)
     val_every: int = 250
     val_batches: int = 4
@@ -43,11 +44,11 @@ def to_tensors(batch: dict[str, np.ndarray], device) -> dict[str, torch.Tensor]:
     return {k: torch.as_tensor(v, device=device) for k, v in batch.items()}
 
 
-def fit_norm(model: WorldModel, train: TrajectoryDataset) -> None:
+def fit_norm(model: WorldModel, train: TrajectoryDataset, floor: float = 5e-6) -> None:
     """Fixe les normalisations de perte à partir des données d'entraînement (variance de changement à 1 pas)."""
     st = train.persistence_stats()
     r = np.concatenate([train.a["rewards"][e, : train.lengths[e]] for e in range(len(train))])
-    model.set_norm(st["map_var"], st["state_var"], float(r.mean()), float(r.std()))
+    model.set_norm(st["map_var"], st["state_var"], float(r.mean()), float(r.std()), floor)
 
 
 @torch.no_grad()
@@ -85,7 +86,7 @@ def train_world_model(train: TrajectoryDataset, val: TrajectoryDataset, wm_cfg: 
     seed_everything(cfg.seed)
     device = get_device(cfg.device)
     model = WorldModel(wm_cfg).to(device)
-    fit_norm(model, train)
+    fit_norm(model, train, cfg.weight_floor)
     rng = SeedManager(cfg.seed).rng("wm/batches")
     log(f"World model {'résiduel' if wm_cfg.residual else 'latent seul'} : {count_parameters(model):,} paramètres, device {device}")
     log_path = out_dir / "train_log.jsonl"

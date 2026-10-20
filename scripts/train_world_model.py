@@ -29,6 +29,7 @@ def main() -> None:
     ap.add_argument("--vector-latent", action="store_true", help="variante sans résidu : carte décodée depuis le seul vecteur latent")
     ap.add_argument("--iters", type=int, nargs="+", default=None, help="itérations par phase (3 valeurs)")
     ap.add_argument("--batch-size", type=int, default=None)
+    ap.add_argument("--weight-floor", type=float, default=None, help="plancher des poids de perte (défaut 5e-6 ; 7.7e-4 = premier essai)")
     ap.add_argument("--device", default=None)
     ap.add_argument("--seed", type=int, default=None)
     args = ap.parse_args()
@@ -39,7 +40,7 @@ def main() -> None:
     if args.vector_latent:
         wm_cfg.residual = False
     for k, v in (("phase_iters", tuple(args.iters) if args.iters else None), ("batch_size", args.batch_size),
-                 ("device", args.device), ("seed", args.seed)):
+                 ("device", args.device), ("seed", args.seed), ("weight_floor", args.weight_floor)):
         if v is not None:
             setattr(tr_cfg, k, v)
     train = TrajectoryDataset(load_split(args.data / "train.npz"))

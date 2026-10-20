@@ -74,11 +74,11 @@ def dream_vs_reality(model, ds: TrajectoryDataset, episode: int, start: int, out
     w = ds.window(episode, start - CONTEXT, CONTEXT + H)
     b = {k: torch.as_tensor(v)[None] for k, v in w.items()}
     out_ = model.rollout(b["maps"], b["states"], b["actions"], n_forced=CONTEXT)
-    cols = [("départ", b["maps"][0, CONTEXT].numpy(), b["maps"][0, CONTEXT].numpy())]
+    cols = [("depart", b["maps"][0, CONTEXT].numpy(), b["maps"][0, CONTEXT].numpy())]
     for h in horizons:
         cols.append((f"+{h} pas", b["maps"][0, CONTEXT + h].numpy(), out_["map"][0, CONTEXT + h - 1].numpy()))
     scale, label_h = 6, 16
-    rows = ("réalité", "rêve (boucle ouverte)", "erreur |rêve − réalité|")
+    rows = ("realite", "reve (boucle ouverte)", "erreur (cyan = nulle, rouge = forte)")        # ASCII : la police par défaut de PIL n'a pas les accents
     img = Image.new("RGB", (len(cols) * 32 * scale, label_h + 3 * 32 * scale + 3 * label_h), (20, 20, 24))
     d = ImageDraw.Draw(img)
     for ci, (name, real, dream) in enumerate(cols):
