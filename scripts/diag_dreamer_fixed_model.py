@@ -49,9 +49,11 @@ def main() -> None:
     for p in model.parameters():
         p.requires_grad_(False)
     arrays = load_split(args.data)
-    buf = ReplayBuffer(len(arrays["lengths"]), wcfg.world.size, wcfg.sim.max_steps)
-    for k in ("maps", "states", "actions", "rewards", "dones", "lengths"):
-        buf.arrays[k][...] = arrays[k]
+    buf = ReplayBuffer(len(arrays["lengths"]), wcfg.world.size, wcfg.sim.max_steps, cfg.ac.gamma)
+    for i in range(len(arrays["lengths"])):
+        T = int(arrays["lengths"][i])
+        buf.add({"maps": arrays["maps"][i, : T + 1], "states": arrays["states"][i, : T + 1], "actions": arrays["actions"][i, :T],
+                 "rewards": arrays["rewards"][i, :T], "dones": arrays["dones"][i, :T]})
     world = ModelWorld(model, wcfg.sim.max_steps)
     ac = ActorCritic(world.feat_dim, cfg.ac, "cpu")
     agent = DreamerAgent(model, ac, max_steps=wcfg.sim.max_steps)
@@ -68,8 +70,9 @@ def main() -> None:
             (args.out / "curve.json").write_text(json.dumps(curve, indent=1), encoding="utf-8")
         if u == args.updates:
             break
-        belief = world.start(sample_start_beliefs(model, buf, cfg.ac_batch, cfg.ac_context, rng, "cpu"))
-        info = ac.update(ac.imagine(world, belief, cfg.ac.horizon, gen))
+        belief, real_ret = sample_start_beliefs(model, buf, cfg.ac_batch, cfg.ac_context, rng, "cpu")
+        belief = world.start(belief)
+        info = ac.update(ac.imagine(world, belief, cfg.ac.horizon, gen), (world.features(belief), real_ret))
         if u % 100 == 0:
             print(f"   [{u}] entropie {info['entropy']:.2f} écart-type de l'avantage {info['adv_std']:.2f} rendement rêvé {info['dream_return']:.2f} récompense rêvée {info['dream_reward']:.3f}", flush=True)
 

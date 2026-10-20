@@ -70,6 +70,21 @@ def test_replay_buffer_is_circular_and_samples_valid_windows():
     assert set(np.unique(b["rewards"])) <= {3.0, 4.0, 5.0}                           # jamais un emplacement vide ou écrasé
 
 
+def test_replay_buffer_stores_real_discounted_returns_and_samples_them():
+    buf = ReplayBuffer(2, size=8, max_steps=20, gamma=0.9)
+    ep = fake_episode(20, 1)                                   # récompense 1 à chaque pas
+    ep["rewards"] = np.arange(20, dtype=np.float32)
+    buf.add(ep)
+    g = buf.arrays["returns"][0]
+    assert g[20] == 0.0 and g[19] == pytest.approx(19.0) and g[18] == pytest.approx(18 + 0.9 * 19)
+    assert g[0] == pytest.approx(sum(0.9 ** k * k for k in range(20)))
+    b = buf.sample_with_returns(8, 5, np.random.default_rng(0))
+    # `ret` est le retour réel à partir de la DERNIÈRE observation de la fenêtre : on le retrouve à partir des récompenses suivantes
+    for rewards_in_window, ret in zip(b["rewards"], b["ret"]):
+        start = int(rewards_in_window[0])                    # récompense au pas k = k : la fenêtre commence au pas `start`
+        assert ret == pytest.approx(g[start + 5])
+
+
 # ---------------------------------------------------------------------------------------------- apprentissage : mondes jouets
 
 class ToyWorld:
@@ -108,6 +123,20 @@ def test_actor_critic_learns_toy_problem_with_delayed_credit():
     # le critique a appris la valeur d'une politique quasi optimale : ~ (1 + 1) par pas sur 8 pas, amorcé par la valeur finale
     f = world.features({"c": torch.zeros(4, dtype=torch.long), "f": torch.ones(4)})
     assert ac.critic.value(f).mean().item() > 10.0
+
+
+def test_critic_is_anchored_on_real_returns():
+    """Avec l'ancrage réel, la valeur d'une croyance converge vers le retour RÉEL fourni, même si les rêves disent autre chose."""
+    torch.manual_seed(0)
+    gen = torch.Generator().manual_seed(0)
+    world = ToyWorld(gen)
+    cfg = ACConfig(hidden=32, horizon=3, critic_lr=3e-3, value_scale=5.0, real_value_weight=1.0)
+    ac = ActorCritic(world.feat_dim, cfg, "cpu")
+    probe = {"c": torch.zeros(16, dtype=torch.long), "f": torch.zeros(16)}
+    f_real = world.features(probe)
+    for _ in range(400):
+        ac.update(ac.imagine(world, world.start(32), 3, gen), (f_real, torch.full((16,), 12.0)))
+    assert ac.critic.value(f_real).mean().item() == pytest.approx(12.0, abs=1.5)
 
 
 def test_actor_critic_does_not_learn_from_noise():
@@ -178,7 +207,8 @@ def test_start_beliefs_come_from_real_windows(tiny_model):
     from agents.random_agent import RandomAgent
     for s in (1, 2):
         buf.add(play_episode(RandomAgent(), env, s, s))
-    b = sample_start_beliefs(tiny_model, buf, 6, 5, np.random.default_rng(0), "cpu")
+    b, ret = sample_start_beliefs(tiny_model, buf, 6, 5, np.random.default_rng(0), "cpu")
+    assert ret.shape == (6,) and (ret >= 0).all()
     assert b["h"].shape == (6, 32) and b["map"].shape == (6, 8, 32, 32)
     assert torch.isfinite(b["h"]).all()
 

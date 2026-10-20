@@ -43,12 +43,14 @@ class ReplayBuffer:
     longueur 0 et ne sont jamais tirés.
     """
 
-    def __init__(self, capacity_episodes: int, size: int = 32, max_steps: int = MAX_STEPS) -> None:
+    def __init__(self, capacity_episodes: int, size: int = 32, max_steps: int = MAX_STEPS, gamma: float = 0.99) -> None:
         n = capacity_episodes
+        self.gamma = gamma
         self.arrays = {"maps": np.zeros((n, max_steps + 1, N_MAP_CHANNELS, size, size), np.uint8),
                        "states": np.zeros((n, max_steps + 1, N_STATE), np.float32),
                        "actions": np.zeros((n, max_steps, 5), np.int8), "rewards": np.zeros((n, max_steps), np.float32),
-                       "dones": np.zeros((n, max_steps), bool), "lengths": np.zeros(n, np.int32)}
+                       "dones": np.zeros((n, max_steps), bool), "lengths": np.zeros(n, np.int32),
+                       "returns": np.zeros((n, max_steps + 1), np.float32)}       # retour actualisé RÉEL jusqu'à la fin de l'épisode, par observation
         self.data = TrajectoryDataset(self.arrays)      # partage les tableaux (et `lengths`) : les ajouts sont visibles immédiatement
         self.capacity, self.n_added, self.env_steps = n, 0, 0
 
@@ -58,6 +60,11 @@ class ReplayBuffer:
         a["maps"][i, : T + 1], a["states"][i, : T + 1] = episode["maps"], episode["states"]
         a["actions"][i, :T], a["rewards"][i, :T], a["dones"][i, :T] = episode["actions"], episode["rewards"], episode["dones"]
         a["lengths"][i] = T
+        g, acc = np.zeros(T + 1, np.float32), 0.0
+        for k in reversed(range(T)):                       # G_k = r_k + γ G_{k+1}, G_T = 0 : fin de partie = fin de l'avenir (comme les rêves)
+            acc = float(episode["rewards"][k]) + self.gamma * acc
+            g[k] = acc
+        a["returns"][i, : T + 1] = g
         self.n_added += 1
         self.env_steps += T
 
@@ -66,6 +73,18 @@ class ReplayBuffer:
 
     def sample_batch(self, batch: int, length: int, rng: np.random.Generator) -> dict[str, np.ndarray]:
         return self.data.sample_batch(batch, length, rng)
+
+    def sample_with_returns(self, batch: int, length: int, rng: np.random.Generator) -> dict[str, np.ndarray]:
+        """Comme `sample_batch`, plus `ret` (batch,) : retour actualisé RÉEL à partir de la dernière observation de chaque fenêtre."""
+        lengths = self.arrays["lengths"]
+        ok = np.flatnonzero(lengths >= length)
+        weights = (lengths[ok] - length + 1).astype(float)
+        eps = rng.choice(ok, size=batch, p=weights / weights.sum())
+        starts = [int(rng.integers(0, lengths[e] - length + 1)) for e in eps]
+        wins = [self.data.window(int(e), s, length) for e, s in zip(eps, starts)]
+        out = {k: np.stack([w[k] for w in wins]) for k in wins[0]}
+        out["ret"] = np.array([self.arrays["returns"][e, s + length] for e, s in zip(eps, starts)], np.float32)
+        return out
 
     def max_length(self) -> int:
         return int(self.arrays["lengths"].max())
@@ -159,6 +178,7 @@ class ACConfig:
     target_tau: float = 0.02          # critique « lent » (moyenne mobile) pour les cibles : stabilise les rendements
     grad_clip: float = 1.0
     unimix: float = 0.01
+    real_value_weight: float = 1.0    # poids de l'ancrage du critique sur les retours RÉELS du tampon (0 : Dreamer pur, critique appris dans les rêves seulement)
 
 
 class ModelWorld:
@@ -222,7 +242,8 @@ class ActorCritic:
         feats.append(world.features(belief))
         return {"feats": torch.stack(feats, 1), "actions": torch.stack(acts, 1), "rewards": torch.stack(rews, 1), "cont": torch.stack(conts, 1)}
 
-    def update(self, roll: dict[str, torch.Tensor]) -> dict[str, float]:
+    def update(self, roll: dict[str, torch.Tensor], real: tuple[torch.Tensor, torch.Tensor] | None = None) -> dict[str, float]:
+        """`real` = (caractéristiques de croyances RÉELLES, retours réels depuis ces croyances) : terme de régression supplémentaire du critique."""
         c = self.cfg
         f, actions, r, cont = roll["feats"], roll["actions"], roll["rewards"], roll["cont"]
         B, H = actions.shape[:2]
@@ -232,6 +253,8 @@ class ActorCritic:
             w = torch.cat([torch.ones(B, 1, device=f.device), torch.cumprod(c.gamma * cont, dim=1)[:, :-1]], dim=1)
         v_norm = self.critic.normalized(f[:, :H])
         critic_loss = (w * (v_norm - returns / c.value_scale) ** 2).mean()
+        if real is not None and c.real_value_weight > 0:
+            critic_loss = critic_loss + c.real_value_weight * ((self.critic.normalized(real[0]) - real[1] / c.value_scale) ** 2).mean()
         self.critic_opt.zero_grad(); critic_loss.backward()
         nn.utils.clip_grad_norm_(self.critic.parameters(), c.grad_clip); self.critic_opt.step()
 
@@ -257,15 +280,18 @@ class ActorCritic:
 # ----------------------------------------------------------------------------------------------------------------------
 
 @torch.no_grad()
-def sample_start_beliefs(model, buffer: ReplayBuffer, batch: int, context: int, rng: np.random.Generator, device) -> dict[str, torch.Tensor]:
-    """Croyances de départ des rêves : fenêtres réelles de `context` pas rejouées dans le modèle (mode « observé »)."""
+def sample_start_beliefs(model, buffer: ReplayBuffer, batch: int, context: int, rng: np.random.Generator, device
+                         ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+    """Croyances de départ des rêves : fenêtres réelles de `context` pas rejouées dans le modèle (mode « observé »).
+
+    Renvoie (croyances, retour actualisé RÉEL à partir de chacune) : ce retour sert à ancrer l'échelle du critique sur la réalité."""
     context = min(context, buffer.max_length())
-    w = buffer.sample_batch(batch, context, rng)
+    w = buffer.sample_with_returns(batch, context, rng)
     maps, states, actions = (torch.as_tensor(w[k], device=device) for k in ("maps", "states", "actions"))
     belief = model.init_belief(maps[:, 0], states[:, 0])
     for t in range(context):
         belief = model.advance(belief, actions[:, t], maps[:, t + 1], states[:, t + 1])
-    return belief
+    return belief, torch.as_tensor(w["ret"], device=device)
 
 
 def rescale_reward_head(model, new_mean: float, new_std: float) -> None:

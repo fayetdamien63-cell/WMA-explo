@@ -285,7 +285,7 @@ def train_dreamer(world_cfg: AntWorldConfig, cfg: DreamerConfig, seed: int, out_
     ac = ActorCritic(world.feat_dim, cfg.ac, device)
     agent = DreamerAgent(model, ac, max_steps=world_cfg.sim.max_steps)
     updater = WorldModelUpdater(model, cfg, device)
-    buffer = ReplayBuffer(cfg.buffer_episodes, world_cfg.world.size, world_cfg.sim.max_steps)
+    buffer = ReplayBuffer(cfg.buffer_episodes, world_cfg.world.size, world_cfg.sim.max_steps, cfg.ac.gamma)
     env = AntWorldEnv(world_cfg)
     pool = train_seeds(cfg.train_pool_size)
     val_worlds = val_seeds(cfg.eval_worlds)
@@ -314,8 +314,9 @@ def train_dreamer(world_cfg: AntWorldConfig, cfg: DreamerConfig, seed: int, out_
         return float(ep["rewards"].sum())
 
     def train_ac_once() -> dict:
-        belief = world.start(sample_start_beliefs(model, buffer, cfg.ac_batch, cfg.ac_context, rng_start, device))
-        return ac.update(ac.imagine(world, belief, cfg.ac.horizon, gen))
+        belief, real_ret = sample_start_beliefs(model, buffer, cfg.ac_batch, cfg.ac_context, rng_start, device)
+        belief = world.start(belief)
+        return ac.update(ac.imagine(world, belief, cfg.ac.horizon, gen), (world.features(belief), real_ret))
 
     def evaluate_now() -> None:
         t0 = time.perf_counter()
