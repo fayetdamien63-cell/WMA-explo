@@ -37,6 +37,9 @@ def main() -> None:
     out = {"split": args.split, "branches": args.branches, "ceiling": ceil,
            "model": {str(h): {k: res["horizons"][str(h)][k]["value"] for k in ("map_skill_macro", "state_skill_macro", "reward_r2")} for h in HORIZONS}}
     (args.model / f"ceiling_{args.split}.json").write_text(json.dumps(out, indent=2), encoding="utf-8")
+    # Le plafond ne dépend PAS du modèle (seulement des fenêtres et du simulateur) : copie mise en cache à côté des données, lue par
+    # scripts/eval_world_model.py pour le critère « part du plafond ».
+    (args.data / f"ceiling_{args.split}.json").write_text(json.dumps(out, indent=2), encoding="utf-8")
     print(f"[{args.split}] plafond de prédictibilité (futurs aléatoires du simulateur, état complet connu) contre le modèle {args.model.name}")
     print("horizon | carte : plafond / modèle / part atteinte | état : plafond / modèle | récompense R² : plafond / modèle")
     for h in HORIZONS:

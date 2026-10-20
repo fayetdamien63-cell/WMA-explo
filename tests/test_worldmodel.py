@@ -303,12 +303,15 @@ def test_gate_verdict_and_dream_figure(tmp_path, ds):
     def fake(skill_map, skill_state, r2):
         return {"horizons": {str(h): {k: {"value": v} for k, v in (("map_skill_macro", skill_map), ("state_skill_macro", skill_state), ("reward_r2", r2))}
                              for h in M.HORIZONS}}
-    good = E.gate_verdict(fake(0.6, 0.6, 0.8), fake(0.55, 0.6, 0.8))
-    assert good["passed"] and all(c["ok"] for c in good["checks"].values())
-    bad = E.gate_verdict(fake(0.6, 0.6, 0.8), fake(0.1, 0.6, 0.8))
-    assert not bad["passed"] and sum(not c["ok"] for c in bad["checks"].values()) >= 2      # carte à 10 pas et à 1 pas (+ écart)
-    gap = E.gate_verdict(fake(0.9, 0.6, 0.8), fake(0.6, 0.6, 0.8))
-    assert not gap["passed"] and [k for k, c in gap["checks"].items() if not c["ok"]] == [k for k in gap["checks"] if "écart" in k]
+    ceiling = {"ceiling": {str(h): {"map_skill_macro": 0.6} for h in M.HORIZONS}}
+    good = E.gate_verdict(fake(0.6, 0.6, 0.8), fake(0.55, 0.6, 0.8), ceiling)
+    assert good["passed"] and all(c["ok"] for c in good["checks"].values()) and len(good["checks"]) == 4 + len(M.HORIZONS)
+    low = E.gate_verdict(fake(0.6, 0.6, 0.8), fake(0.2, 0.6, 0.8), ceiling)        # 0,2 / 0,6 = 33 % du plafond : sous 40 %
+    failed = [k for k, c in low["checks"].items() if not c["ok"]]
+    assert not low["passed"] and any("du plafond" in k for k in failed) and any("10 pas" in k for k in failed)
+    gap = E.gate_verdict(fake(0.9, 0.6, 0.8), fake(0.6, 0.6, 0.8), ceiling)
+    assert not gap["passed"] and [k for k in gap["checks"] if not gap["checks"][k]["ok"]] == [k for k in gap["checks"] if "écart" in k]
+    assert not E.gate_verdict(fake(0.6, 0.6, 0.8), fake(0.55, 0.6, 0.8), None)["passed"], "sans plafond, la porte ne peut pas être déclarée atteinte"
     m = WorldModel(WMConfig(residual=True, **TINY)).eval()
     wins = M.valid_windows(ds, starts=(120,))
     E.dream_vs_reality(m, ds, wins[0][0], wins[0][1], tmp_path / "dream.png")

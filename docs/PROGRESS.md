@@ -7,8 +7,9 @@
 | 2 — Env Gymnasium | ✅ validée (commit `b967d93`) |
 | 3 — Agents de référence et banc d'évaluation | ✅ validée avec la récompense v2 (commit `b8541d6`) |
 | 4 — Baseline PPO | ✅ validée (commit `a424de4`) |
-| 5 — World model supervisé | ⚠️ **4 critères sur 5 de la porte atteints ; 1 non atteint : décision de l'utilisateur attendue** |
-| 6 à 9 | — |
+| 5 — World model supervisé | ✅ acceptée par l'utilisateur (option B puis C) : porte révisée atteinte à 5, 10, 25 et 50 pas ; **1 pas manqué (34 % du plafond pour 40 %)**, non bloquant |
+| 6 — Planification dans le modèle | ⏳ en cours |
+| 7 à 9 | — |
 
 ## Étape 0 — résultats de la porte
 
@@ -206,3 +207,9 @@ python scripts/eval_world_model.py --model runs/step5/wm_residual_big --data run
 python scripts/bayes_ceiling.py --model runs/step5/wm_residual_big --data runs/step5/data_big --split eval_unseen
 ```
 (Les modèles PPO de l'étape 4, `runs/step4/ppo_full_2M/ppo_seed*.zip`, sont nécessaires à la collecte ; sinon `--no-ppo`.)
+
+### Décision de l'utilisateur sur la porte de l'étape 5 : option B puis C
+**B (critère révisé)** : « compétence de carte ≥ 40 % du plafond mesuré (prédicteur à état complet), à chaque horizon », en remplacement de « ≥ 0,5 à 1 pas ». Seuil proposé avant application, NON ajusté ensuite.
+Résultat (`runs/step5/wm_residual/gate_revised.json`) : part du plafond **34 % (1 pas) ❌, 41 % (5), 47 % (10), 53 % (25), 55 % (50) ✅** ; les quatre critères à 10 pas (compétence carte, compétence état, R² de la récompense, écart vus/jamais vus) restent ✅.
+La porte reste donc formellement **non atteinte à 1 pas** ; l'utilisateur a décidé d'avancer malgré cela. **C** : étape 6 avec un horizon de planification ≤ 25 pas (R² de la récompense cumulée 0,54 à 25 pas, 0,35 à 50 pas).
+Le plafond est mis en cache avec les données (`runs/step5/data/ceiling_eval_unseen.json`, indépendant du modèle) et sert à tout modèle futur.

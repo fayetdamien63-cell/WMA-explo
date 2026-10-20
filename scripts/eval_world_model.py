@@ -24,22 +24,33 @@ from models.train import load_checkpoint  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Critères de la porte, fixés AVANT de voir les résultats (mondes JAMAIS VUS, horizon 10 pas) :
-GATE = {"map_skill_macro_h10": 0.25, "state_skill_macro_h10": 0.25, "reward_r2_h10": 0.5, "map_skill_macro_h1": 0.5,
-        "max_seen_unseen_gap_h10": 0.10}
+# Critères de la porte (mondes JAMAIS VUS). Version initiale, fixée AVANT les résultats : compétence carte à 1 pas ≥ 0,5.
+# RÉVISÉ (option B, décision de l'utilisateur) après mesure du plafond de prédictibilité : la compétence de carte doit atteindre une part
+# du plafond d'un prédicteur à état complet, à CHAQUE horizon (seuil proposé AVANT de l'appliquer, non ajusté ensuite).
+GATE = {"map_skill_macro_h10": 0.25, "state_skill_macro_h10": 0.25, "reward_r2_h10": 0.5,
+        "min_ceiling_share": 0.40, "max_seen_unseen_gap_h10": 0.10}
 
 
-def gate_verdict(seen: dict, unseen: dict) -> dict:
+def gate_verdict(seen: dict, unseen: dict, ceiling: dict | None = None) -> dict:
+    """Critères de la porte. `ceiling` : sortie de scripts/bayes_ceiling.py (plafond à état complet, indépendant du modèle) ; sans lui,
+    les critères « part du plafond » sont marqués non évalués (et la porte ne peut pas être déclarée atteinte)."""
     g = lambda r, h, k: r["horizons"][str(h)][k]["value"]
     checks = {
         "compétence carte à 10 pas (jamais vus) ≥ %.2f" % GATE["map_skill_macro_h10"]: (g(unseen, 10, "map_skill_macro"), g(unseen, 10, "map_skill_macro") >= GATE["map_skill_macro_h10"]),
         "compétence état à 10 pas (jamais vus) ≥ %.2f" % GATE["state_skill_macro_h10"]: (g(unseen, 10, "state_skill_macro"), g(unseen, 10, "state_skill_macro") >= GATE["state_skill_macro_h10"]),
         "R² de la récompense cumulée à 10 pas (jamais vus) ≥ %.2f" % GATE["reward_r2_h10"]: (g(unseen, 10, "reward_r2"), g(unseen, 10, "reward_r2") >= GATE["reward_r2_h10"]),
-        "compétence carte à 1 pas (jamais vus) ≥ %.2f" % GATE["map_skill_macro_h1"]: (g(unseen, 1, "map_skill_macro"), g(unseen, 1, "map_skill_macro") >= GATE["map_skill_macro_h1"]),
         "écart vus − jamais vus (carte, 10 pas) ≤ %.2f" % GATE["max_seen_unseen_gap_h10"]: (g(seen, 10, "map_skill_macro") - g(unseen, 10, "map_skill_macro"),
             g(seen, 10, "map_skill_macro") - g(unseen, 10, "map_skill_macro") <= GATE["max_seen_unseen_gap_h10"]),
     }
-    return {"checks": {k: {"value": v, "ok": bool(ok)} for k, (v, ok) in checks.items()}, "passed": all(ok for _, ok in checks.values())}
+    verdict = {"checks": {k: {"value": v, "ok": bool(ok)} for k, (v, ok) in checks.items()}}
+    if ceiling is not None:
+        for h in HORIZONS:
+            share = g(unseen, h, "map_skill_macro") / ceiling["ceiling"][str(h)]["map_skill_macro"]
+            verdict["checks"]["compétence carte à %d pas ≥ %.0f %% du plafond (état complet)" % (h, 100 * GATE["min_ceiling_share"])] = {"value": share, "ok": bool(share >= GATE["min_ceiling_share"])}
+    else:
+        verdict["checks"]["parts du plafond (non évalué : plafond absent)"] = {"value": float("nan"), "ok": False}
+    verdict["passed"] = all(c["ok"] for c in verdict["checks"].values())
+    return verdict
 
 
 def plot_curves(results: dict[str, dict[str, dict]], out: Path) -> None:
@@ -66,7 +77,7 @@ def plot_curves(results: dict[str, dict[str, dict]], out: Path) -> None:
         if lo < -1.0:
             ax.set_ylim(-1.0, hi)
             ax.text(0.02, 0.03, "axe borné à -1 (une courbe descend plus bas)", transform=ax.transAxes, fontsize=8, color="gray")
-    axes[0].axhline(GATE["map_skill_macro_h10"], color="black", ls=":", lw=1)
+    axes[0].axhline(GATE["map_skill_macro_h10"], color="black", ls=":", lw=1)   # seuil de compétence à 10 pas
     axes[0].set_ylabel("1 − erreur modèle / erreur « rien ne change »"); axes[0].legend(fontsize=8)
     fig.suptitle("0 = pas mieux que « rien ne change » ; tirets : mondes vus, trait plein : mondes jamais vus (bande = IC 95 % par épisode)")
     fig.tight_layout(); fig.savefig(out, dpi=110); plt.close(fig)
@@ -107,6 +118,7 @@ def main() -> None:
     ap.add_argument("--compare", type=Path, nargs="*", default=[], help="autres dossiers de modèles à tracer sur les mêmes courbes")
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--threads", type=int, default=4)
+    ap.add_argument("--ceiling", type=Path, default=None, help="plafond de prédictibilité (défaut : <data>/ceiling_eval_unseen.json ; voir scripts/bayes_ceiling.py)")
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
     out = args.out or args.model / "eval"
@@ -131,7 +143,9 @@ def main() -> None:
                       f"{x['state_skill_macro']['value']:+.2f} | {x['reward_r2']['value']:+.2f} / {x['reward_r2_persist']['value']:+.2f} / {x['reward_r2_mean']['value']:+.2f}")
             x10 = r["horizons"]["10"]["map_skill_by_channel"]
             print("  compétence par canal à 10 pas : " + ", ".join(f"{c} {x10[c]:+.2f}" for c in CHANNELS if c != "nest"))
-        verdict = gate_verdict(results[label]["eval_seen"], results[label]["eval_unseen"])
+        ceiling_path = args.ceiling or args.data / "ceiling_eval_unseen.json"
+        ceiling = json.loads(ceiling_path.read_text(encoding="utf-8")) if ceiling_path.exists() else None
+        verdict = gate_verdict(results[label]["eval_seen"], results[label]["eval_unseen"], ceiling)
         results[label]["gate"] = verdict
         print("  PORTE :")
         for k, c in verdict["checks"].items():
