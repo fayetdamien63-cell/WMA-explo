@@ -6,8 +6,9 @@
 | 1 — Simulateur | ✅ validée (commit `6064638`) ; ajustement : minerai réduit (étape 2) |
 | 2 — Env Gymnasium | ✅ validée (commit `b967d93`) |
 | 3 — Agents de référence et banc d'évaluation | ✅ validée avec la récompense v2 (commit `b8541d6`) |
-| 4 — Baseline PPO | ✅ résultats obtenus, en attente de feu vert |
-| 5 à 9 | — |
+| 4 — Baseline PPO | ✅ validée (commit `a424de4`) |
+| 5 — World model supervisé | ⚠️ **4 critères sur 5 de la porte atteints ; 1 non atteint : décision de l'utilisateur attendue** |
+| 6 à 9 | — |
 
 ## Étape 0 — résultats de la porte
 
@@ -140,3 +141,68 @@ Premier run (1 M pas, déterministe seul) : 102,4 [100,0 ; 104,8] en test, conse
 - Hyperparamètres PPO non optimisés (baseline standard) ; 5 seeds ; débit ~600-800 pas/s par processus sur CPU (1 thread). Les 2 M de pas par seed ont pris ~1 h 02 (5 processus en parallèle sur 4 cœurs).
 - L'écart PPO − heuristique de la courbe de validation (+5) est plus grand qu'en test (+0,5) : 10 mondes de validation, bruit de ± 2,5 ; la mesure de référence est celle de test (20 mondes).
 - Un PPO plus long ou mieux réglé pourrait faire mieux : **commande pour la machine avec GPU** : `python scripts/train_ppo.py --world full --steps 5000000 --seeds 0 1 2 3 4 --workers 1 --refs-val runs/step4/full_baselines/val/summary.json --refs-test runs/step3/test/summary.json --out runs/step4/ppo_full_5M` ; à lancer aussi avec `device: cuda` dans `configs/ppo.yaml` pour comparer le temps réel (le petit réseau peut ne pas gagner à passer sur GPU).
+
+## Étape 5 — World model supervisé (résultats)
+
+`pytest` : **192 passés** (+ 3 lents). Tests éprouvés par mutation (5 bugs volontaires, dont la réintroduction de 3 des défauts trouvés pendant l'étape : tous détectés).
+Données : 640 trajectoires (`runs/step5/data`, 56 Mo) — train 400 (326 mondes, 11 % de colonies mortes), val 40, **eval_seen** 100 (mondes d'entraînement, nouvelles trajectoires), **eval_unseen** 100 (mondes de test). Politiques : aléatoire, aléatoire par blocs, heuristique, heuristique bruitée, PPO stochastique, dégénérées.
+Modèle : `résiduel`, 0,82 M de paramètres, entraîné **30 min sur CPU** (4 500 itérations en 3 phases : 1 pas observé, imagination de 8 puis 24 pas). Évaluation : boucle ouverte (10 pas de contexte puis AUCUNE observation), 497 fenêtres, IC 95 % par bootstrap d'épisodes.
+
+### Résultats, mondes JAMAIS VUS (compétence = 1 − erreur du modèle / erreur de « rien ne change » ; 0 = pas mieux)
+| Horizon (pas macro) | 1 | 5 | 10 | 25 | 50 |
+|---|---|---|---|---|---|
+| Carte (macro par canal dynamique) | +0,27 [+0,26 ; +0,28] | +0,26 | **+0,29** [+0,28 ; +0,29] | +0,34 | +0,38 |
+| État interne (macro) | +0,78 | +0,81 | **+0,82** | +0,78 | +0,74 |
+| Récompense cumulée, R² (modèle) | 0,43 | 0,57 | **0,58** | 0,54 | 0,35 (IC large) |
+| Récompense cumulée, R² (« dernière récompense ») | −0,97 | −4,6 | −6,4 | −11,0 | −14,7 |
+| Plafond carte (état complet connu, voir plus bas) | 0,78 | 0,64 | 0,61 | 0,64 | 0,69 |
+
+Mondes vus et jamais vus : écart ≤ 0,01 en compétence de carte à tous les horizons (pas de sur-apprentissage aux mondes d'entraînement). Le modèle bat « rien ne change » à tous les horizons (IC strictement > 0).
+Par canal à 10 pas : visible +0,41, connu +0,34, roche +0,04, nourriture +0,11, minerai +0,15, éclaireuses +0,50, autres fourmis +0,46, nid exclu (immobile).
+
+### Porte (critères fixés AVANT les résultats, mondes jamais vus)
+| Critère | Valeur | |
+|---|---|---|
+| Compétence carte à 10 pas ≥ 0,25 | +0,287 | ✅ |
+| Compétence état à 10 pas ≥ 0,25 | +0,821 | ✅ |
+| R² de la récompense cumulée à 10 pas ≥ 0,5 | +0,578 | ✅ |
+| Écart vus − jamais vus (carte, 10 pas) ≤ 0,10 | +0,005 | ✅ |
+| **Compétence carte à 1 pas ≥ 0,5** | **+0,268** | ❌ |
+
+**Les critères portant sur l'erreur à 10 pas (celui de l'énoncé) sont atteints ; le critère supplémentaire à 1 pas, que j'avais ajouté, ne l'est pas.** Non relâché : diagnostic ci-dessous et décision à l'utilisateur.
+
+### Diagnostic du critère à 1 pas : plafond de prédictibilité (rejeu du simulateur, 32 futurs aléatoires par fenêtre)
+Variance irréductible mesurée EXACTEMENT : on rejoue l'épisode (déterministe, vérifié contre les cartes enregistrées) jusqu'à l'instant de départ, puis on lance 32 futurs avec les mêmes actions et des aléas différents. Plafond d'un prédicteur qui **connaîtrait tout l'état caché** :
+carte 0,78 / 0,64 / 0,61 / 0,64 / 0,69 (aux 5 horizons) ; état 1,00 → 0,93 ; récompense R² 1,00 → 0,97. **Le modèle atteint 34 % / 41 % / 47 % / 53 % / 55 % du plafond de carte.**
+Plafond / modèle par canal à 1 pas : visible 0,79/0,42, connu 0,67/0,26, roche 0,67/0,02, nourriture 0,80/0,10, minerai 0,81/0,10, éclaireuses 0,73/0,52, autres fourmis 1,00/0,45.
+**Ce plafond est trop généreux pour un modèle qui ne voit que les observations** : il connaît le contenu du brouillard (d'où 0,67 pour la roche) et la charge et le cap de chaque fourmi. Borne plus réaliste, même en supposant connues les cases qui seront révélées : roche ≤ 0,16, minerai ≤ 0,31, nourriture ≤ 0,50
+(le contenu d'une case jamais vue est inconnaissable). Moyenne sur les 7 canaux dynamiques ≲ 0,5-0,6 à 1 pas pour un modèle idéal sur le reste : **le seuil de 0,5 est essentiellement hors d'atteinte pour un modèle à observations seules**, et de toute façon très au-dessus de ce que nous obtenons (0,27).
+Leviers pour monter (non testés ici, voir la commande plus bas) : plus de calcul (la validation plafonne dans chaque phase après 4 500 itérations de lot 16), modèle plus grand, plus de données (400 épisodes seulement).
+
+### Comparaison des deux architectures (mondes jamais vus)
+| | résiduel | latent vectoriel seul |
+|---|---|---|
+| Compétence carte à 1 / 10 / 50 pas | +0,27 / +0,29 / +0,38 | **−33,6 / −2,9 / −0,46** |
+| Compétence état à 1 / 10 / 50 pas | +0,78 / +0,82 / +0,74 | −3,7 / +0,64 / +0,74 |
+| R² récompense cumulée à 1 / 10 / 50 pas | 0,43 / 0,58 / 0,35 | 0,38 / 0,42 / 0,58 |
+Hypothèse confirmée : un vecteur de 256 valeurs ne peut pas reproduire exactement une carte 8×32×32 ; sur les canaux STATIQUES (roche −12,7, nourriture −5,7, minerai −2,3 à 10 pas) il est bien pire que « rien ne change ». Il ne se rapproche de la persistance qu'aux grands horizons, où celle-ci se dégrade aussi.
+**Réserve** : comparaison confondue — la variante « latent seul » a dû être entraînée avec un plancher de poids différent (7,7·10⁻⁴ au lieu de 5·10⁻⁶), car avec le plancher bas le nid (poids 2·10⁵) rendait son optimisation dégénérée (perte 129).
+
+### Ce que montre la planche « rêve contre réalité » (`runs/step5/wm_residual/eval/dream_vs_reality_*.png`)
+Le fond statique (roche, terrain connu, nourriture vue) est reproduit fidèlement jusqu'à 50 pas ; les fourmis individuelles ne le sont pas (le modèle, déterministe, prédit une moyenne diffuse sur une dynamique stochastique : zone claire floue, nid net). Pas de modèle génératif stochastique à ce stade (extension possible).
+
+### Coût de calcul (axe « temps réel »)
+Entraînement : 30 min CPU (4 cœurs) pour le résiduel, 19 min pour le latent seul. **Imagination sur CPU : ~720 pas/s (lot 1), ~3 700 pas/s (lot 64), ~2 700 pas/s (lot 256)** — soit MOINS que le vrai simulateur (7 000-15 000 pas/s par cœur) :
+sur CPU, planifier dans le modèle n'est pas plus rapide que planifier dans le simulateur ; l'avantage éventuel se jouera sur GPU et en pas d'environnement consommés (à mesurer aux étapes 6-8).
+
+### Défauts trouvés et corrigés (détail dans DECISIONS.md)
+Poids de perte renormalisés (×700 de déséquilibre), résidu en logit (canaux binaires bloqués), rétropropagation instable à travers les cartes réinjectées, plancher relatif des poids (canaux faibles sous-pondérés). Aucun n'a affecté un résultat rapporté ci-dessus : tous les chiffres viennent du modèle final.
+
+### Commandes (machine avec GPU)
+```
+python scripts/collect_data.py --out runs/step5/data_big --n-train 2000          # plus de données (~30 min, 6 Go de RAM environ)
+python scripts/train_world_model.py --data runs/step5/data_big --out runs/step5/wm_residual_big --iters 6000 6000 6000 --batch-size 64 --device cuda
+python scripts/eval_world_model.py --model runs/step5/wm_residual_big --data runs/step5/data_big --compare runs/step5/wm_vector
+python scripts/bayes_ceiling.py --model runs/step5/wm_residual_big --data runs/step5/data_big --split eval_unseen
+```
+(Les modèles PPO de l'étape 4, `runs/step4/ppo_full_2M/ppo_seed*.zip`, sont nécessaires à la collecte ; sinon `--no-ppo`.)

@@ -61,6 +61,11 @@ def plot_curves(results: dict[str, dict[str, dict]], out: Path) -> None:
     for ax in axes:
         ax.axhline(0, color="gray", lw=1); ax.set_xscale("log"); ax.set_xticks(HORIZONS, [str(h) for h in HORIZONS])
         ax.set_xlabel("horizon (pas macro, boucle ouverte)"); ax.grid(alpha=0.3)
+    for ax in axes:                                  # une variante très mauvaise (-33) écraserait l'échelle : on borne l'axe vertical
+        lo, hi = ax.get_ylim()
+        if lo < -1.0:
+            ax.set_ylim(-1.0, hi)
+            ax.text(0.02, 0.03, "axe borné à -1 (une courbe descend plus bas)", transform=ax.transAxes, fontsize=8, color="gray")
     axes[0].axhline(GATE["map_skill_macro_h10"], color="black", ls=":", lw=1)
     axes[0].set_ylabel("1 − erreur modèle / erreur « rien ne change »"); axes[0].legend(fontsize=8)
     fig.suptitle("0 = pas mieux que « rien ne change » ; tirets : mondes vus, trait plein : mondes jamais vus (bande = IC 95 % par épisode)")
@@ -125,7 +130,7 @@ def main() -> None:
                 print(f"  {h:7d} | {m['value']:+.2f} [{m['ci_low']:+.2f}, {m['ci_high']:+.2f}] ({x['map_mse_model']['value']:.5f} / {x['map_mse_persist']['value']:.5f}) | "
                       f"{x['state_skill_macro']['value']:+.2f} | {x['reward_r2']['value']:+.2f} / {x['reward_r2_persist']['value']:+.2f} / {x['reward_r2_mean']['value']:+.2f}")
             x10 = r["horizons"]["10"]["map_skill_by_channel"]
-            print("  compétence par canal à 10 pas : " + ", ".join(f"{c} {x10[c]:+.2f}" for c in CHANNELS))
+            print("  compétence par canal à 10 pas : " + ", ".join(f"{c} {x10[c]:+.2f}" for c in CHANNELS if c != "nest"))
         verdict = gate_verdict(results[label]["eval_seen"], results[label]["eval_unseen"])
         results[label]["gate"] = verdict
         print("  PORTE :")
