@@ -239,3 +239,15 @@ Deux causes, mesurées :
    Corrigé : plancher ABSOLU de 5·10⁻⁶ ; test mis à jour pour vérifier TOUS les canaux dynamiques (pas seulement les trois plus variables).
 **Le critère « compétence carte à 1 pas ≥ 0,5 en macro-moyenne par canal » est probablement hors d'atteinte** (trois canaux sur sept plafonnés à 0,16 / 0,31 / 0,50 même pour un modèle parfait sur le reste, et des éclaireuses à marche aléatoire). Il n'a PAS été modifié : le modèle est réentraîné
 avec les poids corrigés et réévalué contre les mêmes critères ; si l'échec persiste, il sera soumis à l'utilisateur avec ces plafonds comme proposition de critère révisé.
+
+## Étape 6
+
+- **Décision de l'utilisateur sur l'étape 5 : option B puis C** (voir PROGRESS.md) : porte révisée (part du plafond), puis étape 6 avec un horizon de planification ≤ 25 pas.
+- **Le planificateur est le MÊME code que l'oracle** (`agents/planning.cem_plan`) ; seule la fonction d'évaluation des séquences change (`agents/model_planner.ModelRollout` pour le modèle appris). Le test 1 de l'énoncé (valider le planificateur avec le vrai simulateur)
+  est donc obtenu en changeant uniquement cette fonction : `scripts/run_planner.py --mode sim`.
+- **L'agent planificateur n'a AUCUN accès privilégié** : il maintient une croyance du modèle (`WorldModel.advance` avec chaque vraie observation partielle), plan tous les 5 pas (MPC), horizon plafonné par les pas restants lus dans l'observation (fraction de temps).
+  Test : l'agent ne touche jamais l'environnement qu'on lui passe, et la croyance incrémentale est identique à celle de `rollout` (tests de cohérence `imagine` / `advance`).
+- **Objectif = récompense prédite cumulée pondérée par la probabilité de survie prédite** (tête « fin d'épisode »), sans valeur terminale : l'agent est myope (≤ 25 pas) par construction. L'étape 7 apprend une valeur.
+- **Mesure de l'exploitation du modèle** (`eval/plan_diagnostics.py`) : pour un plan sur 8, on rejoue exactement les actions du plan choisi dans le VRAI simulateur depuis l'état réel (3 aléas) et on compare à la récompense prédite ; même mesure sur 8 séquences ALÉATOIRES
+  de contrôle. L'enveloppe lit l'état réel mais ne le donne jamais à l'agent. Vérifié : les récompenses « réelles » du diagnostic sont identiques à celles de l'environnement quand le flux aléatoire est partagé.
+- **Balayage limité à 8 mondes de test** (au lieu de 20) : l'imagination sur CPU coûte ~2 700 pas/s ; les budgets élevés prennent 4 à 8 minutes par épisode. Les commandes pour 20 mondes (et sur GPU) sont dans PROGRESS.md.
