@@ -252,3 +252,29 @@ avec les poids corrigés et réévalué contre les mêmes critères ; si l'éche
   de contrôle. L'enveloppe lit l'état réel mais ne le donne jamais à l'agent. Vérifié : les récompenses « réelles » du diagnostic sont identiques à celles de l'environnement quand le flux aléatoire est partagé.
 - **Balayage limité à 8 mondes de test** (au lieu de 20) : l'imagination sur CPU coûte ~2 700 pas/s ; les budgets élevés prennent 4 à 8 minutes par épisode. Les commandes pour 20 mondes (et sur GPU) sont dans PROGRESS.md.
 - **Résultat clé et correction du tracé** : l'écart entre le planificateur-simulateur (H25) et l'oracle est dû à l'horizon (H50 : 0,77, H100 : 0,90 normalisé), vérifié par mesure ; l'écart modèle/simulateur à horizon égal vient de l'exploitation du modèle (voir PROGRESS.md). `plot_planner.py` trace une courbe par (mode, horizon) : la première version mélangeait les horizons dans une même ligne.
+
+
+## Étape 7
+
+**Choix de conception (défauts, notés)**
+- **Modèle appris de ZÉRO, en ligne, sur les données de l'agent.** On n'utilise NI le modèle de l'étape 5 NI ses données : elles contiennent des trajectoires de PPO entraîné (millions de pas) qu'un agent honnête n'a pas ; chaque pas d'environnement (échauffement compris) est compté. Le modèle de l'étape 5 ne sert qu'au diagnostic « modèle fixe », explicitement étiqueté comme n'étant pas un résultat d'efficacité.
+- **Entrées de l'acteur et du critique** : état latent h + encodage (carte, état) de la croyance, identiques en réel et en rêve, coupés du graphe du modèle (le gradient de l'acteur ne touche jamais le modèle ; testé).
+- **REINFORCE** (actions discrètes, pas de rétropropagation à travers la dynamique) avec avantage = rendement λ − valeur, bonus d'entropie, mélange uniforme de 1 % (`unimix`) pour ne jamais éteindre l'exploration.
+- **Troncature à 400 pas suivie explicitement dans les rêves** (`ModelWorld`, compteur de pas lu dans la vraie observation de départ) : le modèle ne prédit que la mort, pas la fin de l'épisode ; sans cela le critique surévalue la fin de partie. Testé avec mutation.
+- **Renormalisation périodique des poids de perte du modèle** (toutes les 25 k pas) avec conservation des prédictions de récompense (`rescale_reward_head`, testé) : les statistiques de changement dépendent de la politique.
+- **Évaluation = même protocole que PPO** : 10 mondes de validation, politique stochastique, courbe contre pas d'environnement ET temps réel hors évaluation. Les réglages se font sur la validation ; le test n'a servi qu'une fois la configuration figée (graines 1-3, et la graine 0 évaluée après coup avec la même configuration).
+- **Mesures « rêve contre réalité »** à chaque évaluation : récompense prédite contre récompense réelle en rejouant exactement les mêmes actions dans le vrai simulateur (3 aléas), pour des séquences de la politique et des séquences aléatoires de contrôle ; biais du critique (valeur prédite − retour actualisé réel).
+
+**Défauts trouvés (par les diagnostics, pas par les tests)**
+1. **Plancher d'avantage trop bas (0,1)** : l'avantage était standardisé par son écart-type (~0,2-0,6), ce qui amplifiait du bruit du modèle en gradient de pleine taille ; l'entropie tombait de 6,9 à 1,4 en 200 mises à jour et le retour réel ne bougeait pas pendant que la récompense rêvée montait de 40 %. Corrigé : plancher 1,0 (unités de récompense).
+2. **Horizon d'imagination 15 trop long** pour la fidélité du modèle : exploitation plus forte qu'à 5-8 (mesuré à modèle fixe). Défaut : 8.
+3. **Critique qui n'apprenait pas l'échelle absolue** : la valeur ne se propage que d'`horizon` pas par mise à jour ; biais de −15 constant (valeur ≈ 0 contre un retour réel ≈ 15). Ajout de l'ancrage sur retours réels du tampon (`real_value_weight`) : biais ≈ ±1. **Écart à Dreamer pur**, à ablater à l'étape 8 ; il n'a pas amélioré le retour à modèle fixe.
+4. Outils : `pkill -f` a de nouveau tué mon propre shell (le motif figure dans la ligne de commande) → utiliser `ps | grep | awk | xargs kill`.
+
+**Limites de la validation par tests**
+- Mutation 2 (avantage sans baseline) **survit** : la standardisation (centrage) masque l'absence de baseline sur le monde jouet ; la baseline est une réduction de variance, pas une condition de correction. Les trois autres mutations (signe de l'acteur, rendements sans valeur finale, rêve non tronqué) sont tuées.
+- Le test de bout en bout vérifie la plomberie et la reproductibilité sur un monde de 30 pas, pas la qualité d'apprentissage ; celle-ci n'est établie que par le monde jouet (noyau) et les mesures sur le vrai monde ci-dessus.
+
+**Comptes rendus honnêtes**
+- Courbes très bruitées (10 mondes, ±5) : les « 90 % atteints » d'une seule graine sont des pics isolés ; on rapporte moyenne des derniers points, pics et test, jamais le seul premier franchissement.
+- Un seul réglage final et quatre graines ; ne pas conclure que « Dreamer ne peut pas marcher ici », seulement que cette version, avec ce budget de réglage, ne passe pas la porte.

@@ -8,8 +8,9 @@
 | 3 — Agents de référence et banc d'évaluation | ✅ validée avec la récompense v2 (commit `b8541d6`) |
 | 4 — Baseline PPO | ✅ validée (commit `a424de4`) |
 | 5 — World model supervisé | ✅ acceptée par l'utilisateur (option B puis C) : porte révisée atteinte à 5, 10, 25 et 50 pas ; **1 pas manqué (34 % du plafond pour 40 %)**, non bloquant |
-| 6 — Planification dans le modèle | ✅ résultats prêts, en attente de feu vert |
-| 7 à 9 | — |
+| 6 — Planification dans le modèle | ✅ validée (feu vert de l'utilisateur) |
+| 7 — Dreamer-lite | ⚠️ résultats prêts : **porte NON atteinte** (voir ci-dessous), en attente de décision de l'utilisateur |
+| 8 à 9 | — |
 
 ## Étape 0 — résultats de la porte
 
@@ -264,3 +265,55 @@ python scripts/run_planner.py --mode model --horizon 25 --samples 32 --iters 3 -
 python scripts/plot_planner.py runs/step6
 ```
 (`--device cuda` pour l'imagination sur GPU.)
+
+
+## Étape 7 — Dreamer-lite : acteur-critique entraîné dans l'imagination (résultats)
+
+**Verdict : porte NON atteinte.** Critère : « bat l'heuristique avec moins de pas d'environnement que PPO » (PPO : ~78 k pas pour 90 % de l'heuristique, ~282 k pour 100 %). Dreamer-lite ne l'atteint pas de façon durable : **0 graine sur 4** ne tient 98,5 (90 % de l'heuristique) sur la courbe de validation, et le retour final de test est **au niveau de l'aléatoire**.
+
+### Ce qui a été construit (voir DECISIONS.md)
+Boucle complète sans aucune donnée préchargée (ni PPO ni le modèle de l'étape 5 : chaque pas d'environnement est compté) : échauffement aléatoire de 4 000 pas → jouer un épisode avec la politique courante (stochastique) → mettre à jour le modèle (de zéro, en ligne) → rêver depuis des croyances réelles → mettre à jour acteur et critique (rendements λ, REINFORCE). `src/models/dreamer.py` (noyau), `src/agents/dreamer_agent.py` (agent, boucle, mesures rêve/réalité), `scripts/train_dreamer.py`, `configs/dreamer.yaml`, `tests/test_dreamer.py` (14 tests : rendements λ vérifiés à la main, monde jouet à crédit retardé, contrôle négatif sur du bruit, arrêt du rêve à la fin de l'épisode, tampon, reproductibilité de bout en bout ; 3 mutations sur 4 détectées, voir DECISIONS.md).
+
+### Résultats finals (config retenue : horizon 8, ancrage du critique, 100 000 pas, 4 graines)
+Courbe de validation (10 mondes, politique stochastique, moyenne des 4 graines aux pas 4 k, 14 k, …, 94 k, 100 k) : **82,3 – 91,8 – 88,8 – 91,7 – 87,6 – 94,5 – 82,3 – 92,2 – 87,9 – 81,0 – 82,1**. Aléatoire = 82,6 ; heuristique = 109,5 ; cible « 90 % » = 98,5.
+| Graine | Pic de validation | Moyenne des 5 derniers points | Test (20 mondes, politique finale) |
+|---|---|---|---|
+| 0 | 101,2 | 92,1 | **102,2** |
+| 1 | 94,8 | 87,0 | 77,1 |
+| 2 | 96,1 | 79,0 | 71,3 |
+| 3 | 98,2 | 82,3 | 79,5 |
+Test, moyenne des 4 graines : **82,5** (aléatoire 80,7 ; heuristique 110,4 ; PPO à 2 M pas 110,9 ; oracle 133,9). Seule la graine 0 finit haut, sur un dernier point de validation haut : 3 graines sur 4 finissent sous l'aléatoire. **Le gain précoce (+9 vers 14 k pas) n'est pas conservé ni prolongé.**
+Temps d'entraînement : 3 700 à 4 900 s CPU pour 100 k pas (1 à 2 threads), contre ~240 s pour que PPO atteigne 90 % de l'heuristique : **~20× plus lent en temps réel, et moins bon par pas d'environnement**. Figure : `docs/img/step7_dreamer_vs_ppo.png`.
+Les évaluations de validation (10 mondes, une graine d'agent) ont un bruit de l'ordre de ± 5 ; les oscillations de ± 10 d'un point à l'autre dépassent ce bruit.
+
+### Ce que les diagnostics ont établi (mesuré)
+1. **Premier essai (réglages par défaut, 60 k pas, 1 graine) : aucun apprentissage** (79,8 à la fin ; 77,6 à 24 k). Journal : l'entropie de la politique s'effondre de 6,9 à 1,4 en ~3 000 pas, la récompense rêvée reste à ~0,2 par pas.
+2. **Diagnostic à modèle FIXE** (`scripts/diag_dreamer_fixed_model.py` : acteur-critique entraîné dans le modèle de l'étape 5, qui est bien meilleur que le modèle en ligne ; croyances de départ tirées des données de l'étape 5 ; **n'est pas un résultat d'efficacité** car ces données incluent des trajectoires de PPO) :
+   - réglages par défaut : récompense rêvée +40 % (0,21 → 0,30) mais **retour réel inchangé (78,4)** : l'acteur optimise des erreurs du modèle ;
+   - plancher d'avantage 1,0 et horizon 5 : **81 → 96,9** (95,3 à 1 000 mises à jour) ; horizon 15 : plus lent et écart rêve−réel plus grand (+0,87 contre +0,35 pour des séquences aléatoires à 500 mises à jour) ;
+   - ancrage du critique sur les retours réels : biais du critique de −15 à −0,6 (mesuré), mais **pas de gain de retour** (88,5 à 1 000 mises à jour avec H5).
+   **Plafond ≈ 95–97 avec un bon modèle fixe**, soit le même que le planificateur de l'étape 6 dans ce modèle (98–100) et loin des 110–113 du même planificateur dans le vrai simulateur à horizon 25.
+3. **Boucle en ligne (modèle appris de zéro)**, deux variantes à 100 k pas : H8 + ancrage (graine 0 : moyenne des 5 derniers points 92,1) et H5 sans ancrage (73,1 ; deux effondrements à 52,7 et 31,4, population moyenne 7 = colonie quasi éteinte, alors que l'écart rêve−réel à 5 pas restait faible). Puis 3 graines de plus de la première : bilan ci-dessus.
+4. **Le modèle appris en ligne n'est jamais nettement meilleur que « rien ne change »** : la perte de carte normalisée (1 = persistance) reste entre 1 et 4 sur toute la durée (journaux `dreamer_seed*_train.jsonl`), malgré 4 440 mises à jour (40 pour 1 000 pas).
+5. L'écart rêve−réel de la politique finale est petit (|écart| ≲ 0,3 sur 8 pas) : à cet horizon, le modèle n'est pas visiblement exploité par la politique.
+
+### Ce qui n'est PAS établi
+La **cause de la dégradation après ~50 k pas** (courbes qui retombent vers l'aléatoire). Candidats, aucun testé : modèle qui ne s'améliore pas assez (point 4), non-stationnarité modèle/critique/politique, information de long terme (bâtiments, stocks) mal portée par le modèle à 8 pas. Une seule configuration finale ; budget de réglage faible (4 diagnostics à modèle fixe de 1 000 mises à jour, 2 variantes en ligne) ; le réglage n'a utilisé que les mondes de validation.
+
+### Écarts à Dreamer pur (à ablater à l'étape 8)
+Critique ancré sur des retours réels du tampon (`real_value_weight`, 0 = Dreamer pur) ; REINFORCE (actions discrètes) et non rétropropagation à travers le modèle ; modèle déterministe sans variable latente stochastique ; troncature de l'épisode suivie explicitement dans les rêves.
+
+### Options (décision de l'utilisateur)
+1. Passer à l'étape 8 avec Dreamer-lite tel quel : comparaison honnête à nombre de pas égal (il perdra contre PPO sur l'efficacité) et tests de généralisation / changement de règle, où un modèle peut aider.
+2. D'abord améliorer le modèle (peut se faire sur GPU) : beaucoup plus de mises à jour et de données ; ensemble de modèles avec pénalité de désaccord ; variable latente stochastique (type RSSM).
+3. Tester d'abord les causes candidates (courbe de perte du modèle contre mises à jour, ablation du critique, modèle figé après N pas).
+
+### Commandes
+```
+python scripts/train_dreamer.py --seeds 0 1 2 3 4 --workers 1 --threads 4 --steps 200000 --out runs/step7/dreamer \
+    --refs-val runs/step4/full_baselines/val/summary.json --refs-test runs/step3/test/summary.json     # config retenue = configs/dreamer.yaml
+python scripts/train_dreamer.py ... --set ac.horizon=15 ac.real_value_weight=0 wm_updates_per_1k=100      # surcharges "a.b=valeur"
+python scripts/diag_dreamer_fixed_model.py --updates 1000 --set ac.horizon=5 --out runs/step7/diag
+python scripts/plot_dreamer.py --dreamer runs/step7/dreamer/dreamer_seed*_curve.jsonl --ppo runs/step4/ppo_full_2M/ppo_seed*_curve.jsonl --refs runs/step4/full_baselines/val/summary.json
+```
+(`device: cuda` dans `configs/dreamer.yaml` pour le GPU.)
