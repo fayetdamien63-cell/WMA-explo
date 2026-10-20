@@ -169,8 +169,9 @@ def test_loss_normalisation_makes_persistence_cost_about_one_per_dynamic_channel
     assert (m.map_w > 0).all() and m.reward_std > 0
     importance = m.map_w * var                       # coût de la persistance par canal
     assert importance[5] < 1e-6, "le nid est immobile : coût nul"
-    top = importance[var.argsort(descending=True)[:3]]
-    assert (top > 0.5).all() and (top <= 1.0 + 1e-6).all(), f"coût de la persistance sur les canaux dynamiques : {top.tolist()}"
+    dynamic = importance[var > 1e-5]                  # TOUS les canaux qui changent, y compris les moins dynamiques (minerai, nourriture, roche)
+    assert len(dynamic) >= 6, "attendu : tous les canaux sauf le nid"
+    assert (dynamic > 0.6).all() and (dynamic <= 1.0 + 1e-6).all(), f"coût de la persistance par canal dynamique : {dynamic.tolist()}"
     # Même ordre de grandeur que le terme de récompense, mesuré sur un lot : la persistance coûte ~1 sur la carte comme sur l'état.
     b = batch_of(ds, B=8, L=6, seed=3)
     persist_map = (((b["maps"][:, 1:] - b["maps"][:, :-1]) ** 2).mean(dim=(3, 4)) * m.map_w).mean()

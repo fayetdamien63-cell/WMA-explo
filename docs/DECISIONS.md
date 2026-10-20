@@ -227,3 +227,15 @@ de creux (population minimale 93 % de la moyenne), plus d'explosion finale (13-1
 2. **Résidu en espace logit** `σ(logit(base)+δ)` : pour une case valant exactement 0 ou 1, le gradient est atténué d'un facteur ~10³ ; les canaux binaires (visible, connu, roche) restaient *exactement* à « rien ne change », même en sur-apprentissage
    d'un petit lot. Remplacé par un résidu additif borné « straight-through ». Test de régression ajouté. (Découvert grâce au test de sur-apprentissage, qui échouait.)
 3. **Rétropropagation à travers les cartes prédites réinjectées** : instable (perte 302 et divergence avec un pas de 1e-3 sur un petit lot). `detach_base=True` par défaut : seul l'état latent est rétropropagé dans le temps.
+
+### Quatrième défaut, trouvé APRÈS la première évaluation (plancher ε des poids de perte) — diagnostic de la porte non atteinte
+Premier modèle résiduel (poids avec plancher RELATIF ε = 5 % de la variance moyenne, `runs/step5/wm_residual_floor_v1/`) : mondes jamais vus, boucle ouverte.
+Compétence carte (macro) 0,25 / 0,25 / 0,27 / 0,32 / 0,36 à 1 / 5 / 10 / 25 / 50 pas ; état 0,70 → 0,79 ; R² de la récompense cumulée 0,43 / 0,58 / 0,57 / 0,57 / 0,65 ; écart vus − jamais vus ≤ 0,01.
+**Porte : 4 critères sur 5 ; échec sur « compétence carte à 1 pas ≥ 0,5 » (0,254).** Par canal à 10 pas : visible 0,43, connu 0,33, roche 0,06, nourriture 0,04, minerai 0,08, éclaireuses 0,49, autres fourmis 0,46.
+Deux causes, mesurées :
+1. **Part irréductible** : roche, nourriture et minerai changent surtout quand une éclaireuse RÉVÈLE des cases (100 %, 57 %, 71 % du changement). Leur contenu dans le brouillard est inconnaissable : même un prédicteur qui saurait QUELLES cases seront révélées ne dépasserait pas
+   **0,16 (roche), 0,50 (nourriture), 0,31 (minerai)** de compétence (calcul sur 39 675 transitions de mondes jamais vus).
+2. **Sous-entraînement causé par mon réglage** : le plancher relatif de 7,7·10⁻⁴ dépassait la variance de la roche (3·10⁻⁴), de la nourriture (1,9·10⁻⁴) et du minerai (2·10⁻⁵) : ces canaux pesaient 5 à 30 fois moins que prévu. Le modèle y était sous leurs plafonds (nourriture 0,04 contre 0,50).
+   Corrigé : plancher ABSOLU de 5·10⁻⁶ ; test mis à jour pour vérifier TOUS les canaux dynamiques (pas seulement les trois plus variables).
+**Le critère « compétence carte à 1 pas ≥ 0,5 en macro-moyenne par canal » est probablement hors d'atteinte** (trois canaux sur sept plafonnés à 0,16 / 0,31 / 0,50 même pour un modèle parfait sur le reste, et des éclaireuses à marche aléatoire). Il n'a PAS été modifié : le modèle est réentraîné
+avec les poids corrigés et réévalué contre les mêmes critères ; si l'échec persiste, il sera soumis à l'utilisateur avec ces plafonds comme proposition de critère révisé.

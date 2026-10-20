@@ -136,17 +136,18 @@ class WorldModel(nn.Module):
 
     # ------------------------------------------------------------------ outils
     def set_norm(self, map_var, state_var, reward_mean: float, reward_std: float) -> None:
-        """Poids de perte w = 1 / (variance de changement à 1 pas + ε).
+        """Poids de perte w = 1 / (variance de changement à 1 pas + ε), avec un plancher ε ABSOLU très petit (5·10⁻⁶).
 
         Pour un canal dynamique, w · MSE ≈ MSE / MSE_{« rien ne change »} = 1 − compétence : une prédiction qui ne change rien vaut ≈ 1,
         une prédiction parfaite 0, et tous les canaux dynamiques pèsent pareil, quelle que soit leur rareté. Le terme de récompense
-        (normalisé par son écart-type) vaut 1 pour un prédicteur constant : les trois termes sont ainsi comparables. On ne renormalise PAS
-        les poids (une moyenne à 1 écraserait carte et état d'un facteur ~1000 devant la récompense : défaut corrigé pendant l'étape 5).
-        ε = 5 % de la variance moyenne évite qu'un canal quasi immobile (nid : variance 0) reçoive un poids infini.
+        (normalisé par son écart-type) vaut 1 pour un prédicteur constant : les trois termes sont ainsi comparables.
+        Deux défauts corrigés pendant l'étape 5 : (1) des poids renormalisés à moyenne 1 écrasaient carte et état d'un facteur ~1000 devant
+        la récompense ; (2) un plancher RELATIF (5 % de la variance moyenne) dépassait la variance de la roche, de la nourriture et du minerai :
+        ces canaux étaient sous-pondérés de 5 à 30 fois et le modèle n'y apprenait presque rien (compétence 0,04 à 0,10). Le plancher
+        absolu évite seulement qu'un canal immobile (nid : variance 0) reçoive un poids infini.
         """
         def weights(var):
-            var = torch.as_tensor(var, dtype=torch.float32)
-            return 1.0 / (var + 0.05 * var.mean())
+            return 1.0 / (torch.as_tensor(var, dtype=torch.float32) + 5e-6)
         self.map_w.copy_(weights(map_var))
         self.state_w.copy_(weights(state_var))
         self.reward_mean.fill_(float(reward_mean))
