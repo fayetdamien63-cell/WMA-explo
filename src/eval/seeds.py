@@ -31,3 +31,6 @@ def test_seeds(n: int, start: int = 0) -> list[int]:
 def _check(start: int, n: int) -> None:
     if start < 0 or n < 0 or start + n > RANGE_SIZE:
         raise ValueError("plage de seeds hors limites")
+
+
+test_seeds.__test__ = False   # le nom commence par « test_ » : empêche pytest de la collecter quand elle est importée dans un test

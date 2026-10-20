@@ -1,0 +1,20 @@
+# World model supervisé (étape 5). Trois blocs : modèle, entraînement, données.
+model:
+  hidden: 256
+  embed: 192
+  action_embed: 64
+  enc_channels: [16, 32, 32]
+  head_channels: 16
+  residual: true        # false : variante « latent vectoriel seul » (spécification minimale de l'énoncé)
+train:
+  batch_size: 16
+  phase_iters: [1500, 1500, 1500]    # 1) 1 pas observé  2) boucle ouverte de 8 pas  3) boucle ouverte de 24 pas
+  phase_context: [16, 8, 8]
+  phase_horizon: [0, 8, 24]
+  phase_lr: [0.001, 0.0005, 0.0003]
+  grad_clip: 1.0
+  loss_weights: [1.0, 1.0, 1.0, 0.1]  # carte, état, récompense, fin d'épisode
+  val_every: 250
+  seed: 0
+  device: auto
+  torch_threads: 4

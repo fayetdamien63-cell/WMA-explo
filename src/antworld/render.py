@@ -75,3 +75,23 @@ def render_rgb(world: AntWorld, scale: int = 14, hud: bool = True) -> np.ndarray
     d.text((4, 18), f"cueill.N {counts[0]} M {counts[1]}  eclair. {counts[2]}  bat. {counts[3]}  "
                     f"nurserie {st['nursery']} grenier {st['granary']}  vu {100 * st['known']:.0f}%", fill=(200, 200, 120))
     return np.vstack([img, np.asarray(bar)])
+
+
+def render_obs_map(m: np.ndarray, scale: int = 8) -> np.ndarray:
+    """Image RGB (32·scale)² d'une CARTE D'OBSERVATION (8 canaux dans [0, 1], voir observation.py).
+
+    Sert à comparer rêve et réalité : accepte aussi des valeurs prédites (probabilités), qui apparaissent « floues ».
+    Lecture : brouillard = gris foncé ; sable = connu ; brun = roche ; vert = nourriture vue ; orange = minerai vu ;
+    or = nid ; rouge = éclaireuses ; jaune = autres fourmis ; une case connue mais non visible à cet instant est assombrie.
+    """
+    visible, known, rock, food, ore, nest, scouts, others = (np.clip(m[i], 0, 1)[..., None] for i in range(8))
+    fog = np.array([38.0, 38.0, 44.0])
+    ground = SAND * (1 - rock) + ROCK * rock
+    ground = ground * (1 - 0.7 * food) + FOOD * 0.7 * food
+    ground = ground * (1 - 0.8 * ore) + ORE * 0.8 * ore
+    ground = ground * (0.72 + 0.28 * visible)                         # les cases hors de vue sont un peu plus sombres
+    img = fog * (1 - known) + ground * known
+    img = img * (1 - nest) + np.array([255.0, 215.0, 0.0]) * nest
+    img = img * (1 - others) + np.array([250.0, 230.0, 40.0]) * others
+    img = img * (1 - scouts) + np.array([230.0, 30.0, 30.0]) * scouts
+    return np.clip(np.kron(img, np.ones((scale, scale, 1))), 0, 255).astype(np.uint8)
