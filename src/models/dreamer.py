@@ -236,7 +236,8 @@ class ActorCritic:
         nn.utils.clip_grad_norm_(self.critic.parameters(), c.grad_clip); self.critic_opt.step()
 
         adv = returns - v_norm.detach() * c.value_scale
-        adv = (adv - adv.mean()) / max(float(adv.std()), c.adv_floor)
+        adv_std = float(adv.std())
+        adv = (adv - adv.mean()) / max(adv_std, c.adv_floor)
         logp, ent = self.actor.log_prob_entropy(f[:, :H].reshape(B * H, -1), actions.reshape(B * H, -1))
         logp, ent = logp.view(B, H), ent.view(B, H)
         actor_loss = -(w * adv * logp).mean() - c.ent_coef * (w * ent).mean()
@@ -248,7 +249,7 @@ class ActorCritic:
                 ps.lerp_(p, c.target_tau)
         self.n_updates += 1
         return {"critic_loss": float(critic_loss.detach()), "actor_loss": float(actor_loss.detach()), "entropy": float(ent.detach().mean()),
-                "dream_return": float(returns[:, 0].mean()), "dream_reward": float(r.mean()), "dream_alive": float(w[:, -1].mean())}
+                "dream_return": float(returns[:, 0].mean()), "dream_reward": float(r.mean()), "adv_std": adv_std, "dream_alive": float(w[:, -1].mean())}
 
 
 # ----------------------------------------------------------------------------------------------------------------------

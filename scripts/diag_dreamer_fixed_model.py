@@ -38,12 +38,13 @@ def main() -> None:
     ap.add_argument("--eval-every", type=int, default=500)
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--set", nargs="*", default=[], help="surcharges de config, ex. ac.ent_coef=0.03 ac.horizon=5")
     ap.add_argument("--out", type=Path, default=ROOT / "runs/step7/diag_fixed_model")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
     torch.set_num_threads(args.threads)
     seed_everything(args.seed)
-    cfg, wcfg = load_config(DreamerConfig, args.config), load_config(AntWorldConfig, args.world_config)
+    cfg, wcfg = load_config(DreamerConfig, args.config, args.set), load_config(AntWorldConfig, args.world_config)
     model = load_checkpoint(args.model)
     for p in model.parameters():
         p.requires_grad_(False)
@@ -70,7 +71,7 @@ def main() -> None:
         belief = world.start(sample_start_beliefs(model, buf, cfg.ac_batch, cfg.ac_context, rng, "cpu"))
         info = ac.update(ac.imagine(world, belief, cfg.ac.horizon, gen))
         if u % 100 == 0:
-            print(f"   [{u}] entropie {info['entropy']:.2f} rendement rêvé {info['dream_return']:.2f} récompense rêvée {info['dream_reward']:.3f}", flush=True)
+            print(f"   [{u}] entropie {info['entropy']:.2f} écart-type de l'avantage {info['adv_std']:.2f} rendement rêvé {info['dream_return']:.2f} récompense rêvée {info['dream_reward']:.3f}", flush=True)
 
 
 if __name__ == "__main__":

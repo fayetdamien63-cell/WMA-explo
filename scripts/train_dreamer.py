@@ -31,9 +31,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def train_one(args):
-    world_path, cfg_path, seed, steps, out_dir, n_test, eval_every, threads = args
+    world_path, cfg_path, seed, steps, out_dir, n_test, eval_every, threads, overrides = args
     world_cfg = load_config(AntWorldConfig, world_path)
-    cfg = load_config(DreamerConfig, cfg_path)
+    cfg = load_config(DreamerConfig, cfg_path, overrides)
     if eval_every:
         cfg.eval_every = eval_every
     if threads:
@@ -62,6 +62,7 @@ def main() -> None:
     ap.add_argument("--eval-every", type=int, default=None)
     ap.add_argument("--workers", type=int, default=1)
     ap.add_argument("--threads", type=int, default=None, help="threads torch par processus (défaut : valeur de la config)")
+    ap.add_argument("--set", nargs="*", default=[], help="surcharges de config, ex. ac.ent_coef=0.03 wm_updates_per_1k=40")
     ap.add_argument("--test-worlds", type=int, default=20, help="0 : pas d'évaluation de test (développement)")
     ap.add_argument("--refs-val", type=Path, default=None)
     ap.add_argument("--refs-test", type=Path, default=None)
@@ -69,7 +70,7 @@ def main() -> None:
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    jobs = [(str(args.world_config), str(args.config), s, args.steps, str(args.out), args.test_worlds, args.eval_every, args.threads)
+    jobs = [(str(args.world_config), str(args.config), s, args.steps, str(args.out), args.test_worlds, args.eval_every, args.threads, list(args.set))
             for s in args.seeds]
     t0 = time.perf_counter()
     if args.workers <= 1:
