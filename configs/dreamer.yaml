@@ -15,9 +15,9 @@ wm:
   head_channels: 16
   residual: true
 wm_batch: 16
-wm_updates_per_1k: 10
-wm_pretrain_updates: 300
-wm_phase_updates: [100, 100, 1000000]   # 1 pas observé -> boucle ouverte 8 -> boucle ouverte 16
+wm_updates_per_1k: 40
+wm_pretrain_updates: 600
+wm_phase_updates: [150, 150, 1000000]   # 1 pas observé -> boucle ouverte 8 -> boucle ouverte 16
 wm_phase_context: [16, 8, 8]
 wm_phase_horizon: [0, 8, 16]
 wm_phase_lr: [0.001, 0.0005, 0.0003]
@@ -27,19 +27,20 @@ wm_weight_floor: 5.0e-6
 refit_norm_every: 25000
 ac:
   hidden: 256
-  horizon: 15
+  horizon: 8                # 15 exploitait trop le modèle (diagnostic à modèle fixe, voir PROGRESS.md)
   gamma: 0.99
   lam: 0.95
   actor_lr: 0.0003
   critic_lr: 0.0003
   ent_coef: 0.01
-  adv_floor: 0.1
+  adv_floor: 1.0            # 0.1 : le bruit du modèle était amplifié, la politique s'effondrait vers un comportement déterministe
   value_scale: 10.0
   target_tau: 0.02
   grad_clip: 1.0
   unimix: 0.01
-ac_updates_per_1k: 25
-ac_batch: 64
+  real_value_weight: 1.0    # ancrage du critique sur les retours RÉELS du tampon (0 : Dreamer pur)
+ac_updates_per_1k: 50
+ac_batch: 32
 ac_context: 8
 device: auto
 torch_threads: 1
